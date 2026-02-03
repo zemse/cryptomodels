@@ -1,0 +1,17 @@
+{
+  "name": "yellow-build-example",
+  "version": "1.0.0",
+  "description": "Yellow Network payment application using state channels",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@erc7824/nitrolite": "^0.5.3"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
