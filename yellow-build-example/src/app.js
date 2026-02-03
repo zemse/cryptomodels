@@ -4,6 +4,7 @@ import {
   createTransferMessage,
   createCreateChannelMessage,
   createCloseChannelMessage,
+  createResizeChannelMessage,
   createGetChannelsMessageV2,
   NitroliteRPC,
   generateRequestId,
@@ -50,6 +51,10 @@ class YellowPaymentApp {
     // Session key for signing requests (raw ECDSA without prefix)
     this.sessionKeyPrivate = null;
     this.sessionKeyAddress = null;
+    // Channels list
+    this.channels = [];
+    // Pending channel to fund after creation
+    this.pendingChannelFund = null;
 
     this.initUI();
   }
@@ -70,13 +75,21 @@ class YellowPaymentApp {
       initialAmount: document.getElementById('initialAmount'),
       recipientAddress: document.getElementById('recipientAddress'),
       paymentAmount: document.getElementById('paymentAmount'),
-      activityLog: document.getElementById('activityLog')
+      activityLog: document.getElementById('activityLog'),
+      // Channel management
+      chainSelect: document.getElementById('chainSelect'),
+      channelAmount: document.getElementById('channelAmount'),
+      createChannelBtn: document.getElementById('createChannelBtn'),
+      refreshChannelsBtn: document.getElementById('refreshChannelsBtn'),
+      channelsList: document.getElementById('channelsList')
     };
 
     // Event listeners
     this.elements.connectBtn.addEventListener('click', () => this.connectWallet());
     this.elements.createSessionBtn.addEventListener('click', () => this.createSession());
     this.elements.sendPaymentBtn.addEventListener('click', () => this.sendPayment());
+    this.elements.createChannelBtn.addEventListener('click', () => this.createChannel());
+    this.elements.refreshChannelsBtn.addEventListener('click', () => this.getChannels());
 
     // Initialize WebSocket connection
     this.connectWebSocket();
@@ -178,6 +191,22 @@ class YellowPaymentApp {
 
         case 'transfer':
           this.handleTransferResponse(responseData);
+          break;
+
+        case 'create_channel':
+          this.handleCreateChannelResponse(responseData);
+          break;
+
+        case 'get_channels':
+          this.handleGetChannelsResponse(responseData);
+          break;
+
+        case 'close_channel':
+          this.handleCloseChannelResponse(responseData);
+          break;
+
+        case 'resize_channel':
+          this.handleResizeChannelResponse(responseData);
           break;
 
         default:
@@ -344,8 +373,11 @@ class YellowPaymentApp {
       this.elements.connectBtn.textContent = 'Connected';
       this.elements.connectBtn.disabled = true;
       this.elements.createSessionBtn.disabled = false;
+      this.elements.createChannelBtn.disabled = false;
+      this.elements.refreshChannelsBtn.disabled = false;
 
       await this.getBalances();
+      await this.getChannels();
 
     } catch (error) {
       this.log(`Failed to connect wallet: ${error.message}`, 'error');
@@ -539,6 +571,217 @@ class YellowPaymentApp {
   updateBalanceDisplay() {
     const displayAmount = (this.balance / 1_000_000).toFixed(2);
     this.elements.balance.textContent = `${displayAmount} USDC`;
+  }
+
+  // ============ Channel Management ============
+
+  async createChannel() {
+    const chainId = parseInt(this.elements.chainSelect.value);
+    const amount = parseFloat(this.elements.channelAmount.value);
+
+    if (!this.isAuthenticated) {
+      this.log('Please authenticate first', 'error');
+      return;
+    }
+
+    if (isNaN(amount) || amount <= 0) {
+      this.log('Please enter a valid amount', 'error');
+      return;
+    }
+
+    const amountInMicrounits = Math.floor(amount * 1_000_000);
+    if (amountInMicrounits > this.ledgerBalance) {
+      this.log('Insufficient balance', 'error');
+      return;
+    }
+
+    const chainConfig = CHAIN_CONFIG[chainId];
+    if (!chainConfig) {
+      this.log('Invalid chain selected', 'error');
+      return;
+    }
+
+    try {
+      this.log(`Creating channel on ${chainConfig.name} with ${amount} USDC...`);
+
+      // Store the amount to allocate after channel is created
+      this.pendingChannelFund = {
+        amount: amountInMicrounits,
+        chainId: chainId
+      };
+
+      const channelMessage = await createCreateChannelMessage(
+        this.messageSigner,
+        {
+          chain_id: chainId,
+          token: chainConfig.token
+        }
+      );
+
+      console.log('Create channel message:', channelMessage);
+      this.ws.send(channelMessage);
+
+    } catch (error) {
+      this.log(`Failed to create channel: ${error.message}`, 'error');
+      this.pendingChannelFund = null;
+    }
+  }
+
+  async resizeChannel(channelId, allocateAmount) {
+    if (!this.isAuthenticated) {
+      this.log('Please authenticate first', 'error');
+      return;
+    }
+
+    try {
+      this.log(`Allocating ${(allocateAmount / 1_000_000).toFixed(2)} USDC to channel...`);
+
+      const resizeMessage = await createResizeChannelMessage(
+        this.messageSigner,
+        {
+          channel_id: channelId,
+          allocate_amount: BigInt(allocateAmount),
+          funds_destination: this.userAddress
+        }
+      );
+
+      console.log('Resize channel message:', resizeMessage);
+      this.ws.send(resizeMessage);
+
+    } catch (error) {
+      this.log(`Failed to resize channel: ${error.message}`, 'error');
+    }
+  }
+
+  async getChannels() {
+    if (!this.isAuthenticated) {
+      this.log('Please authenticate first', 'error');
+      return;
+    }
+
+    try {
+      this.log('Fetching channels...');
+
+      // Use V2 which doesn't require signing
+      const channelsMessage = createGetChannelsMessageV2(this.userAddress);
+      console.log('Get channels message:', channelsMessage);
+      this.ws.send(channelsMessage);
+
+    } catch (error) {
+      this.log(`Failed to get channels: ${error.message}`, 'error');
+    }
+  }
+
+  async closeChannel(channelId) {
+    if (!this.isAuthenticated) {
+      this.log('Please authenticate first', 'error');
+      return;
+    }
+
+    try {
+      this.log(`Closing channel ${channelId.slice(0, 10)}...`);
+
+      const closeMessage = await createCloseChannelMessage(
+        this.messageSigner,
+        channelId,
+        this.userAddress  // funds_destination - send to our wallet
+      );
+
+      console.log('Close channel message:', closeMessage);
+      this.ws.send(closeMessage);
+
+    } catch (error) {
+      this.log(`Failed to close channel: ${error.message}`, 'error');
+    }
+  }
+
+  handleCreateChannelResponse(data) {
+    console.log('Create channel response:', data);
+    if (data?.channel_id) {
+      this.log(`Channel created: ${data.channel_id.slice(0, 10)}...`);
+
+      // If we have a pending fund amount, resize the channel to allocate funds
+      if (this.pendingChannelFund) {
+        const { amount } = this.pendingChannelFund;
+        this.pendingChannelFund = null;
+        this.resizeChannel(data.channel_id, amount);
+      } else {
+        this.log('Channel created with 0 funds. Use resize to add funds.');
+        this.getChannels();
+      }
+    } else {
+      this.log(`Channel response: ${JSON.stringify(data)}`);
+      this.pendingChannelFund = null;
+    }
+  }
+
+  handleGetChannelsResponse(data) {
+    console.log('Get channels response:', data);
+    this.channels = data?.channels || [];
+    this.renderChannelsList();
+  }
+
+  handleResizeChannelResponse(data) {
+    console.log('Resize channel response:', data);
+    if (data?.channel_id || data?.success) {
+      this.log('Channel funded! Funds allocated to channel.');
+      this.log('Close the channel to withdraw funds on-chain.');
+      // Refresh channels and balances
+      this.getChannels();
+      this.getBalances();
+    } else {
+      this.log(`Resize response: ${JSON.stringify(data)}`);
+    }
+  }
+
+  handleCloseChannelResponse(data) {
+    console.log('Close channel response:', data);
+    if (data?.success || data?.channel_id) {
+      this.log('Channel closed! Funds will be sent to your wallet on-chain.');
+      this.log('Check your wallet on the testnet for the withdrawn tokens.');
+      // Refresh channels and balances
+      this.getChannels();
+      this.getBalances();
+    } else {
+      this.log(`Close channel response: ${JSON.stringify(data)}`);
+    }
+  }
+
+  renderChannelsList() {
+    const container = this.elements.channelsList;
+
+    if (this.channels.length === 0) {
+      container.innerHTML = '<p style="color: #888;">No channels found. Create one to withdraw funds on-chain.</p>';
+      return;
+    }
+
+    const html = this.channels.map(ch => {
+      const chainName = CHAIN_CONFIG[ch.chain_id]?.name || `Chain ${ch.chain_id}`;
+      const amount = ch.amount ? (parseInt(ch.amount) / 1_000_000).toFixed(2) : '0.00';
+      const status = ch.status || 'unknown';
+      const channelIdShort = ch.channel_id ? ch.channel_id.slice(0, 10) + '...' : 'N/A';
+
+      return `
+        <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <strong>${chainName}</strong><br>
+              <span style="color: #888; font-size: 0.8rem;">${channelIdShort}</span><br>
+              <span style="color: #4caf50;">${amount} USDC</span>
+              <span style="color: #888;"> (${status})</span>
+            </div>
+            ${status === 'open' ? `
+              <button onclick="window.app.closeChannel('${ch.channel_id}')"
+                style="background: #f44336; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">
+                Close & Withdraw
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    container.innerHTML = html;
   }
 }
 
