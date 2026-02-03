@@ -698,15 +698,26 @@ class YellowPaymentApp {
   handleCreateChannelResponse(data) {
     console.log('Create channel response:', data);
     if (data?.channel_id) {
-      this.log(`Channel created: ${data.channel_id.slice(0, 10)}...`);
+      const channelIdShort = data.channel_id.slice(0, 10);
+      this.log(`Channel created: ${channelIdShort}...`);
 
-      // If we have a pending fund amount, resize the channel to allocate funds
-      if (this.pendingChannelFund) {
+      // Check if channel needs on-chain deposit first
+      const state = data.state;
+      if (state?.intent === 1 && state?.allocations?.[0]?.amount === "0") {
+        this.log('Channel pending - needs on-chain deposit to custody contract.');
+        this.log(`Chain: Sepolia | Custody: 0x019B65A265EB3363822f2752141b3dF16131b262`);
+        this.log('After depositing on-chain, the channel will be ready for use.');
+        this.pendingChannelFund = null;
+        // Store channel for later use
+        this.pendingChannelId = data.channel_id;
+        this.getChannels();
+      } else if (this.pendingChannelFund) {
+        // Channel is open, can resize
         const { amount } = this.pendingChannelFund;
         this.pendingChannelFund = null;
         this.resizeChannel(data.channel_id, amount);
       } else {
-        this.log('Channel created with 0 funds. Use resize to add funds.');
+        this.log('Channel created. Use resize to add funds.');
         this.getChannels();
       }
     } else {
