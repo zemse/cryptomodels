@@ -10,17 +10,41 @@ import {
   generateRequestId,
   getCurrentTimestamp,
   EIP712AuthTypes,
-  createECDSAMessageSigner
+  createECDSAMessageSigner,
+  NitroliteService,
+  getChannelId,
+  getPackedState
 } from '@erc7824/nitrolite';
-import { getAddress } from 'viem';
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { getAddress, createPublicClient, createWalletClient, custom, http, toHex, keccak256 } from 'viem';
+import { sepolia, baseSepolia } from 'viem/chains';
+import { generatePrivateKey, privateKeyToAccount, signMessage } from 'viem/accounts';
 
-// Supported chains with their token addresses
+// Supported chains with their token and custody addresses
 const CHAIN_CONFIG = {
-  11155111: { name: 'Ethereum Sepolia', token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb' },
-  84532: { name: 'Base Sepolia', token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb' },
-  80002: { name: 'Polygon Amoy', token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb' },
-  59141: { name: 'Linea Sepolia', token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb' }
+  11155111: {
+    name: 'Ethereum Sepolia',
+    token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
+    custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
+    chain: sepolia
+  },
+  84532: {
+    name: 'Base Sepolia',
+    token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
+    custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
+    chain: baseSepolia
+  },
+  80002: {
+    name: 'Polygon Amoy',
+    token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
+    custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
+    chain: null
+  },
+  59141: {
+    name: 'Linea Sepolia',
+    token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
+    custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
+    chain: null
+  }
 };
 
 // Yellow Network WebSocket endpoints
@@ -55,6 +79,14 @@ class YellowPaymentApp {
     this.channels = [];
     // Pending channel to fund after creation
     this.pendingChannelFund = null;
+    // Viem clients for on-chain operations
+    this.publicClient = null;
+    this.walletClient = null;
+    this.nitroliteService = null;
+    // Track on-chain channels for closing
+    this.onChainChannels = new Map(); // channelId -> { channel, chainId }
+    // Store server broadcast channel data (for recovering stuck channels)
+    this.serverChannels = new Map(); // channelId -> channel data from server
 
     this.initUI();
   }
@@ -81,6 +113,8 @@ class YellowPaymentApp {
       channelAmount: document.getElementById('channelAmount'),
       createChannelBtn: document.getElementById('createChannelBtn'),
       refreshChannelsBtn: document.getElementById('refreshChannelsBtn'),
+      checkCustodyBtn: document.getElementById('checkCustodyBtn'),
+      withdrawToWalletBtn: document.getElementById('withdrawToWalletBtn'),
       channelsList: document.getElementById('channelsList')
     };
 
@@ -90,6 +124,8 @@ class YellowPaymentApp {
     this.elements.sendPaymentBtn.addEventListener('click', () => this.sendPayment());
     this.elements.createChannelBtn.addEventListener('click', () => this.createChannel());
     this.elements.refreshChannelsBtn.addEventListener('click', () => this.getChannels());
+    this.elements.checkCustodyBtn.addEventListener('click', () => this.checkCustodyBalance());
+    this.elements.withdrawToWalletBtn.addEventListener('click', () => this.withdrawToWallet());
 
     // Initialize WebSocket connection
     this.connectWebSocket();
@@ -109,11 +145,37 @@ class YellowPaymentApp {
 
     this.ws = new WebSocket(WS_URL);
 
-    this.ws.onopen = () => {
+    this.ws.onopen = async () => {
       this.elements.wsStatus.classList.add('connected');
       this.elements.wsStatus.classList.remove('disconnected');
       this.elements.wsStatusText.textContent = 'Connected to Yellow Network';
       this.log('Connected to Yellow Network!');
+
+      // Auto re-authenticate if wallet was previously connected
+      if (this.userAddress && !this.isAuthenticated) {
+        this.log('Re-authenticating...');
+        this.elements.connectBtn.textContent = 'Authenticating...';
+        try {
+          await this.authenticate();
+          this.log('Re-authenticated successfully!');
+          // Restore UI state
+          this.elements.connectBtn.textContent = 'Connected';
+          this.elements.connectBtn.disabled = true;
+          this.elements.createSessionBtn.disabled = false;
+          this.elements.createChannelBtn.disabled = false;
+          this.elements.refreshChannelsBtn.disabled = false;
+          this.elements.checkCustodyBtn.disabled = false;
+          this.elements.withdrawToWalletBtn.disabled = false;
+          // Refresh data after re-authentication
+          await this.getBalances();
+          await this.getChannels();
+        } catch (error) {
+          this.log(`Re-authentication failed: ${error.message}`, 'error');
+          // Update UI to show need to reconnect
+          this.elements.connectBtn.textContent = 'Reconnect';
+          this.elements.connectBtn.disabled = false;
+        }
+      }
     };
 
     this.ws.onclose = () => {
@@ -122,6 +184,12 @@ class YellowPaymentApp {
       this.elements.wsStatusText.textContent = 'Disconnected';
       this.isAuthenticated = false;
       this.log('Disconnected from Yellow Network');
+
+      // Update button to show reconnecting state
+      if (this.userAddress) {
+        this.elements.connectBtn.textContent = 'Reconnecting...';
+        this.elements.connectBtn.disabled = true;
+      }
 
       // Attempt to reconnect after 3 seconds
       setTimeout(() => this.connectWebSocket(), 3000);
@@ -156,6 +224,19 @@ class YellowPaymentApp {
       if (method === 'error') {
         const errorMsg = responseData?.error || JSON.stringify(responseData);
         this.log(`Error: ${errorMsg}`, 'error');
+
+        // Handle "channel already exists" error - extract channel ID and use it
+        if (errorMsg.includes('an open channel with broker already exists:') && this.pendingWithdrawal) {
+          const match = errorMsg.match(/already exists: (0x[a-fA-F0-9]+)/);
+          if (match) {
+            const existingChannelId = match[1];
+            this.log(`Using existing channel: ${existingChannelId.slice(0, 10)}...`);
+            const { amount } = this.pendingWithdrawal;
+            this.pendingWithdrawal = null;
+            // Use the existing channel for resize
+            this.requestWithdrawalResize(existingChannelId, amount);
+          }
+        }
         return;
       }
 
@@ -167,6 +248,11 @@ class YellowPaymentApp {
         case 'auth_verify':
           this.log('Authentication successful!');
           this.isAuthenticated = true;
+          // Clear the auth timeout
+          if (this.authTimeoutId) {
+            clearTimeout(this.authTimeoutId);
+            this.authTimeoutId = null;
+          }
           if (this.pendingAuthResolve) {
             this.pendingAuthResolve();
             this.pendingAuthResolve = null;
@@ -211,6 +297,10 @@ class YellowPaymentApp {
 
         case 'bu':  // Balance update notification from server
           this.handleBalanceUpdate(responseData);
+          break;
+
+        case 'channels':  // Server broadcast of all channels (includes stuck ones)
+          this.handleChannelsBroadcast(responseData);
           break;
 
         default:
@@ -373,6 +463,17 @@ class YellowPaymentApp {
 
       this.userAddress = accounts[0];
 
+      // Setup viem clients for on-chain operations
+      this.publicClient = createPublicClient({
+        chain: sepolia,
+        transport: http()
+      });
+      this.walletClient = createWalletClient({
+        chain: sepolia,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
+
       this.elements.walletStatus.classList.add('connected');
       this.elements.walletStatusText.textContent = 'Wallet connected';
       this.elements.userAddress.textContent = this.userAddress;
@@ -398,6 +499,8 @@ class YellowPaymentApp {
       this.elements.createSessionBtn.disabled = false;
       this.elements.createChannelBtn.disabled = false;
       this.elements.refreshChannelsBtn.disabled = false;
+      this.elements.checkCustodyBtn.disabled = false;
+      this.elements.withdrawToWalletBtn.disabled = false;
 
       await this.getBalances();
       await this.getChannels();
@@ -450,12 +553,13 @@ class YellowPaymentApp {
 
         this.ws.send(authMessage);
 
-        setTimeout(() => {
+        // Store timeout ID so we can clear it on success
+        this.authTimeoutId = setTimeout(() => {
           if (!this.isAuthenticated) {
             this.pendingAuthResolve = null;
             reject(new Error('Authentication timeout'));
           }
-        }, 15000);  // 15 second timeout
+        }, 60000);  // 60 second timeout (MetaMask signing can take time)
       } catch (error) {
         reject(error);
       }
@@ -676,6 +780,143 @@ class YellowPaymentApp {
     }
   }
 
+  // Allocate funds from off-chain ledger to channel (step 2 of withdrawal flow)
+  async allocateFundsToChannel(channelId, amount) {
+    if (!this.isAuthenticated) {
+      this.log('Please authenticate first', 'error');
+      return;
+    }
+
+    try {
+      const resizeMessage = await createResizeChannelMessage(
+        this.messageSigner,
+        {
+          channel_id: channelId,
+          allocate_amount: BigInt(amount),  // Allocate to channel from ledger
+          funds_destination: this.userAddress
+        }
+      );
+
+      console.log('Allocate funds message:', resizeMessage);
+      this.ws.send(resizeMessage);
+
+    } catch (error) {
+      this.log(`Failed to allocate funds: ${error.message}`, 'error');
+      this.pendingWithdrawal = null;
+    }
+  }
+
+  // Resize negatively to move funds from channel to custody (step 3 of withdrawal flow)
+  async resizeNegativeForWithdrawal(channelId, amount) {
+    if (!this.isAuthenticated) {
+      this.log('Please authenticate first', 'error');
+      return;
+    }
+
+    try {
+      this.log(`Step 3/5: Resizing negatively to move ${(amount / 1_000_000).toFixed(2)} USDC to custody...`);
+
+      const resizeMessage = await createResizeChannelMessage(
+        this.messageSigner,
+        {
+          channel_id: channelId,
+          resize_amount: BigInt(-amount),  // NEGATIVE to reduce channel, move to custody
+          funds_destination: this.userAddress
+        }
+      );
+
+      // Mark that we're expecting a signed state for custody submission
+      this.pendingWithdrawal.step = 'resize_negative';
+      this.pendingWithdrawal.expectStateUpdate = true;
+
+      console.log('Negative resize message:', resizeMessage);
+      this.ws.send(resizeMessage);
+
+    } catch (error) {
+      this.log(`Failed to resize negatively: ${error.message}`, 'error');
+      this.pendingWithdrawal = null;
+    }
+  }
+
+  async withdrawToWallet() {
+    if (!this.isAuthenticated) {
+      this.log('Please authenticate first', 'error');
+      return;
+    }
+
+    const amount = parseFloat(this.elements.channelAmount.value);
+    if (!amount || amount <= 0) {
+      this.log('Please enter a valid amount', 'error');
+      return;
+    }
+
+    const amountInMicrounits = Math.floor(amount * 1_000_000);
+    const chainId = parseInt(this.elements.chainSelect.value);
+    const chainConfig = CHAIN_CONFIG[chainId];
+
+    if (!chainConfig) {
+      this.log('Invalid chain selected', 'error');
+      return;
+    }
+
+    try {
+      this.log(`Withdrawal Flow: Creating single-user channel with ${amount} USDC allocation...`);
+
+      // Store withdrawal params for the multi-step flow
+      this.pendingWithdrawal = {
+        amount: amountInMicrounits,
+        chainId: chainId,
+        step: 'create_channel'  // Track which step we're on
+      };
+
+      // Step 1: Create channel (will be 2-party but we'll allocate only to ourselves)
+      const channelMessage = await createCreateChannelMessage(
+        this.messageSigner,
+        {
+          chain_id: chainId,
+          token: chainConfig.token
+        }
+      );
+
+      this.ws.send(channelMessage);
+      // Flow continues in handleCreateChannelResponse
+
+    } catch (error) {
+      this.log(`Withdrawal failed: ${error.message}`, 'error');
+      console.error('Withdrawal error:', error);
+      this.pendingWithdrawal = null;
+    }
+  }
+
+  async requestWithdrawalResize(channelId, amount) {
+    try {
+      this.log(`Requesting withdrawal resize: +${(amount / 1_000_000).toFixed(2)} USDC to on-chain...`);
+
+      // Use POSITIVE resize_amount to move funds FROM off-chain ledger TO on-chain custody
+      // Then we can close the channel and withdraw
+      const resizeMessage = await createResizeChannelMessage(
+        this.messageSigner,
+        {
+          channel_id: channelId,
+          resize_amount: BigInt(amount), // Positive = move from ledger to on-chain custody
+          funds_destination: this.userAddress
+        }
+      );
+
+      console.log('Withdrawal resize message:', resizeMessage);
+
+      // Store pending withdrawal for handling the response
+      this.pendingWithdrawalChannelId = channelId;
+      this.pendingWithdrawalAmount = amount;
+
+      this.ws.send(resizeMessage);
+
+    } catch (error) {
+      this.log(`Withdrawal resize failed: ${error.message}`, 'error');
+      console.error('Withdrawal resize error:', error);
+    }
+  }
+
   async getChannels() {
     if (!this.isAuthenticated) {
       this.log('Please authenticate first', 'error');
@@ -692,6 +933,120 @@ class YellowPaymentApp {
 
     } catch (error) {
       this.log(`Failed to get channels: ${error.message}`, 'error');
+    }
+  }
+
+  async checkCustodyBalance() {
+    if (!this.isAuthenticated) {
+      this.log('Please authenticate first', 'error');
+      return;
+    }
+
+    try {
+      const chainId = parseInt(this.elements.chainSelect.value);
+      const chainConfig = CHAIN_CONFIG[chainId];
+      if (!chainConfig) {
+        this.log('Invalid chain selected', 'error');
+        return;
+      }
+
+      this.log(`Checking custody balance on ${chainConfig.name}...`);
+
+      // Ensure we're on the right chain
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      const currentChainIdDecimal = parseInt(currentChainId, 16);
+      if (currentChainIdDecimal !== chainId) {
+        this.log(`Please switch to ${chainConfig.name} in your wallet first`, 'error');
+        return;
+      }
+
+      // Create public client for read operations
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+
+      // Initialize NitroliteService
+      const nitroliteService = new NitroliteService(
+        publicClient,
+        { custody: chainConfig.custody },
+        null,
+        this.userAddress
+      );
+
+      // Check balance in custody contract
+      const balance = await nitroliteService.getAccountBalance(this.userAddress, chainConfig.token);
+      const balanceFormatted = (Number(balance) / 1_000_000).toFixed(6);
+
+      this.log(`Custody balance: ${balanceFormatted} USDC`);
+
+      if (balance > 0n) {
+        this.log('You have funds in custody! Click withdraw to get them.');
+        // Add withdraw option
+        const container = this.elements.channelsList;
+        container.innerHTML = `
+          <div style="background: rgba(76,175,80,0.2); padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid rgba(76,175,80,0.5);">
+            <p style="color: #4caf50; margin-bottom: 0.5rem;"><strong>Custody Balance: ${balanceFormatted} USDC</strong></p>
+            <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 0.5rem;">on ${chainConfig.name}</p>
+            <button onclick="window.app.withdrawFromCustody(${chainId}, '${chainConfig.token}', '${balance}')"
+              style="background: #4caf50; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; width: 100%;">
+              Withdraw to Wallet
+            </button>
+          </div>
+        ` + container.innerHTML;
+      } else {
+        this.log('No funds in custody on this chain.');
+      }
+
+    } catch (error) {
+      const errorMsg = error.cause?.message || error.shortMessage || error.message;
+      this.log(`Failed to check custody: ${errorMsg}`, 'error');
+      console.error('Check custody error:', error);
+    }
+  }
+
+  async withdrawFromCustody(chainId, tokenAddress, amount) {
+    try {
+      const chainConfig = CHAIN_CONFIG[chainId];
+      this.log(`Withdrawing ${(Number(amount) / 1_000_000).toFixed(6)} USDC from custody...`);
+
+      // Create wallet client
+      const walletClient = createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+
+      // Initialize NitroliteService with wallet
+      const nitroliteService = new NitroliteService(
+        publicClient,
+        { custody: chainConfig.custody },
+        walletClient,
+        this.userAddress
+      );
+
+      // Withdraw
+      const txHash = await nitroliteService.withdraw(tokenAddress, BigInt(amount));
+      this.log(`Withdraw tx: ${txHash.slice(0, 10)}...`);
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status === 'success') {
+        this.log('Withdrawal complete! Tokens sent to your wallet.');
+      } else {
+        this.log('Withdrawal failed', 'error');
+      }
+
+      // Refresh
+      this.checkCustodyBalance();
+
+    } catch (error) {
+      const errorMsg = error.cause?.message || error.shortMessage || error.message;
+      this.log(`Withdraw failed: ${errorMsg}`, 'error');
+      console.error('Withdraw error:', error);
     }
   }
 
@@ -718,33 +1073,198 @@ class YellowPaymentApp {
     }
   }
 
-  handleCreateChannelResponse(data) {
+  async handleCreateChannelResponse(data) {
     console.log('Create channel response:', data);
     if (data?.channel_id) {
       const channelIdShort = data.channel_id.slice(0, 10);
-      this.log(`Channel created: ${channelIdShort}...`);
+      this.log(`Channel created off-chain: ${channelIdShort}...`);
 
-      // Check if channel needs on-chain deposit first
-      const state = data.state;
-      if (state?.intent === 1 && state?.allocations?.[0]?.amount === "0") {
-        this.log('Channel pending - needs on-chain deposit to custody contract.');
-        this.log(`Chain: Sepolia | Custody: 0x019B65A265EB3363822f2752141b3dF16131b262`);
-        this.log('After depositing on-chain, the channel will be ready for use.');
-        this.pendingChannelFund = null;
-        // Store channel for later use
-        this.pendingChannelId = data.channel_id;
-        this.getChannels();
-      } else if (this.pendingChannelFund) {
-        // Channel is open, can resize
-        const { amount } = this.pendingChannelFund;
-        this.pendingChannelFund = null;
-        this.resizeChannel(data.channel_id, amount);
+      // Store channel data for on-chain submission
+      this.pendingChannelId = data.channel_id;
+      this.pendingChannelData = data;
+
+      // Check if this is for a pending withdrawal flow
+      if (this.pendingWithdrawal && this.pendingWithdrawal.step === 'create_channel') {
+        this.log('Step 1/5: Channel created, submitting on-chain...');
+        this.pendingWithdrawal.step = 'submit_on_chain';
+        this.pendingWithdrawal.channelId = data.channel_id;
+      }
+      // Check if this is for regular channel funding
+      else if (this.pendingChannelFund) {
+        this.log('Channel created for funding...');
+      }
+
+      // Submit channel on-chain
+      if (data.channel && data.state && data.server_signature) {
+        this.log('Submitting channel to blockchain...');
+        await this.submitChannelOnChain(data);
       } else {
-        this.log('Channel created. Use resize to add funds.');
+        this.log('Channel created but missing on-chain data. Refresh channels.');
         this.getChannels();
+        this.pendingWithdrawal = null;
       }
     } else {
       this.log(`Channel response: ${JSON.stringify(data)}`);
+      this.pendingChannelFund = null;
+      this.pendingWithdrawal = null;
+    }
+  }
+
+  async submitChannelOnChain(channelData) {
+    try {
+      const chainId = parseInt(this.elements.chainSelect.value);
+      const chainConfig = CHAIN_CONFIG[chainId];
+
+      if (!chainConfig?.custody) {
+        this.log('No custody address configured for this chain', 'error');
+        return;
+      }
+
+      // Switch to the correct network if needed
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      const currentChainIdDecimal = parseInt(currentChainId, 16);
+      if (currentChainIdDecimal !== chainId) {
+        this.log(`Switching to ${chainConfig.name}...`);
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: `0x${chainId.toString(16)}` }]
+          });
+          // Recreate wallet client after network switch
+          this.walletClient = createWalletClient({
+            chain: chainConfig.chain,
+            transport: custom(window.ethereum),
+            account: this.userAddress
+          });
+          this.publicClient = createPublicClient({
+            chain: chainConfig.chain,
+            transport: http()
+          });
+        } catch (switchError) {
+          // If the chain is not added, we could add it here
+          this.log(`Please switch to ${chainConfig.name} in your wallet`, 'error');
+          return;
+        }
+      }
+
+      // Initialize NitroliteService for on-chain operations
+      const nitroliteService = new NitroliteService(
+        this.publicClient,
+        { custody: chainConfig.custody },
+        this.walletClient,
+        this.userAddress
+      );
+
+      // Prepare the channel for on-chain submission
+      const channel = {
+        participants: channelData.channel.participants,
+        adjudicator: channelData.channel.adjudicator,
+        challenge: BigInt(channelData.channel.challenge),
+        nonce: BigInt(channelData.channel.nonce)
+      };
+
+      // Prepare the unsigned state
+      const unsignedState = {
+        intent: channelData.state.intent,
+        version: BigInt(channelData.state.version),
+        data: channelData.state.state_data || '0x',
+        allocations: channelData.state.allocations.map(a => ({
+          destination: a.destination,
+          token: a.token,
+          amount: BigInt(a.amount)
+        })),
+        sigs: []
+      };
+
+      // Calculate channel ID and sign the state with our session key
+      const channelIdCalculated = getChannelId(channel, chainId);
+      this.log(`Channel ID: ${channelIdCalculated.slice(0, 10)}...`);
+
+      // Get the packed state to sign
+      const packedState = getPackedState(channelIdCalculated, unsignedState);
+
+      // Sign with main wallet (the first participant) via MetaMask
+      // The contract expects signature from the participant who created the channel
+      this.log('Requesting wallet signature for state...');
+      const userSignature = await this.walletClient.signMessage({
+        account: this.userAddress,
+        message: { raw: packedState }
+      });
+
+      // State needs sigs in order: [userSignature, serverSignature]
+      const signedState = {
+        ...unsignedState,
+        sigs: [userSignature, channelData.server_signature]
+      };
+
+      this.log('Creating channel on-chain (requires wallet approval)...');
+      console.log('On-chain channel data:', { channel, signedState, channelIdCalculated });
+      console.log('Server signature:', channelData.server_signature);
+      console.log('User signature:', userSignature);
+      console.log('Packed state (hex):', packedState);
+
+      // Submit to blockchain (create channel only - deposits happen via resize)
+      const txHash = await nitroliteService.createChannel(channel, signedState);
+      this.log(`On-chain tx submitted: ${txHash.slice(0, 10)}...`);
+
+      // Wait for confirmation
+      this.log('Waiting for confirmation...');
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        this.log('Channel created on-chain!');
+
+        // Store on-chain channel data for later operations
+        this.onChainChannels.set(channelData.channel_id, {
+          channel,
+          channelId: channelIdCalculated,
+          chainId,
+          chainConfig,
+          tokenAddress: chainConfig.token
+        });
+
+        // Update the channels list UI to show on-chain channel
+        this.renderChannelsList();
+
+        // Check if this is part of the withdrawal flow
+        if (this.pendingWithdrawal && this.pendingWithdrawal.step === 'submit_on_chain') {
+          const { amount, channelId } = this.pendingWithdrawal;
+          this.pendingWithdrawal.step = 'allocate_funds';
+          this.log(`Step 2/5: Channel on-chain, allocating ${(amount / 1_000_000).toFixed(2)} USDC...`);
+
+          // Allocate funds to the channel from off-chain ledger
+          await this.allocateFundsToChannel(channelId, amount);
+        }
+        // Check if this was for regular funding
+        else if (this.pendingChannelFund) {
+          const { amount } = this.pendingChannelFund;
+          this.pendingChannelFund = null;
+          this.log(`Requesting resize to allocate ${(amount / 1_000_000).toFixed(2)} USDC...`);
+          await this.resizeChannel(channelData.channel_id, amount);
+        } else {
+          this.getChannels();
+        }
+      } else {
+        this.log('On-chain transaction failed', 'error');
+        this.pendingWithdrawal = null;
+      }
+    } catch (error) {
+      // Extract detailed error info
+      const errorDetails = error.cause?.message || error.cause?.shortMessage || error.shortMessage || error.message;
+      const errorReason = error.cause?.reason || error.reason || '';
+      this.log(`On-chain submission failed: ${errorDetails}`, 'error');
+      if (errorReason) {
+        this.log(`Reason: ${errorReason}`, 'error');
+      }
+      console.error('On-chain error:', error);
+      console.error('Error cause:', error.cause);
+      console.error('Error details:', {
+        message: error.message,
+        shortMessage: error.shortMessage,
+        cause: error.cause,
+        reason: error.reason,
+        details: error.details
+      });
       this.pendingChannelFund = null;
     }
   }
@@ -755,8 +1275,73 @@ class YellowPaymentApp {
     this.renderChannelsList();
   }
 
-  handleResizeChannelResponse(data) {
+  // Handle server broadcast of channels (includes stuck/orphaned channels)
+  handleChannelsBroadcast(data) {
+    console.log('Channels broadcast:', data);
+    const channels = data?.channels || [];
+
+    // Store each channel's data for potential recovery
+    channels.forEach(ch => {
+      if (ch.channel_id) {
+        this.serverChannels.set(ch.channel_id, ch);
+        console.log(`Stored server channel: ${ch.channel_id.slice(0, 10)}...`);
+      }
+    });
+
+    // Also update the channels list for UI
+    if (channels.length > 0) {
+      this.channels = channels;
+      this.renderChannelsList();
+    }
+  }
+
+  async handleResizeChannelResponse(data) {
     console.log('Resize channel response:', data);
+
+    // Check if this is part of the withdrawal flow
+    if (this.pendingWithdrawal && data?.channel_id === this.pendingWithdrawal.channelId) {
+      const step = this.pendingWithdrawal.step;
+      const amount = this.pendingWithdrawal.amount;
+      const channelId = data.channel_id;
+
+      // Step 2: After allocate_funds completes, do negative resize
+      if (step === 'allocate_funds') {
+        this.log('Step 2/5: Funds allocated to channel successfully');
+        this.getBalances(); // Show updated balance
+
+        // Wait 10 seconds before sending negative resize to avoid "resize already ongoing" error
+        this.log('Waiting 10 seconds for server to complete allocation...');
+        setTimeout(async () => {
+          await this.resizeNegativeForWithdrawal(channelId, amount);
+        }, 10000);
+        return;
+      }
+
+      // Step 3: After negative resize, submit state to custody
+      if (step === 'resize_negative' && data?.state && data?.server_signature) {
+        this.log('Step 4/5: Received signed state update, submitting to custody contract...');
+        this.pendingWithdrawal.step = 'submit_to_custody';
+
+        // Store the signed state and amount for custody submission
+        const onChainData = this.onChainChannels.get(channelId);
+        if (onChainData) {
+          onChainData.depositedAmount = amount;
+        }
+
+        await this.submitStateToCustody(data, amount);
+        return;
+      }
+
+      // Fallback: if resize succeeded but no state, just log
+      if (data?.channel_id || data?.success) {
+        this.log('Resize completed but no state update received');
+        this.log(`Response: ${JSON.stringify(data).slice(0, 200)}`);
+        this.pendingWithdrawal = null;
+      }
+      return;
+    }
+
+    // Regular resize (not withdrawal flow)
     if (data?.channel_id || data?.success) {
       this.log('Channel funded! Funds allocated to channel.');
       this.log('Close the channel to withdraw funds on-chain.');
@@ -768,12 +1353,181 @@ class YellowPaymentApp {
     }
   }
 
-  handleCloseChannelResponse(data) {
+  // Submit signed state to custody contract (step 4 of withdrawal flow)
+  async submitStateToCustody(resizeData, amount) {
+    try {
+      const chainId = parseInt(this.elements.chainSelect.value);
+      const chainConfig = CHAIN_CONFIG[chainId];
+
+      if (!chainConfig?.custody) {
+        this.log('No custody address configured for this chain', 'error');
+        this.pendingWithdrawal = null;
+        return;
+      }
+
+      // Ensure correct network
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      if (parseInt(currentChainId, 16) !== chainId) {
+        this.log(`Switching to ${chainConfig.name}...`);
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: `0x${chainId.toString(16)}` }]
+          });
+        } catch (switchError) {
+          this.log(`Please switch to ${chainConfig.name} in your wallet`, 'error');
+          this.pendingWithdrawal = null;
+          return;
+        }
+      }
+
+      // Create clients
+      const walletClient = createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+
+      const nitroliteService = new NitroliteService(
+        publicClient,
+        { custody: chainConfig.custody },
+        walletClient,
+        this.userAddress
+      );
+
+      // Get channel data
+      const channelData = this.pendingChannelData;
+      if (!channelData?.channel) {
+        this.log('Missing channel data for custody submission', 'error');
+        this.pendingWithdrawal = null;
+        return;
+      }
+
+      const channel = {
+        participants: channelData.channel.participants.map(p => getAddress(p)),
+        adjudicator: getAddress(channelData.channel.adjudicator),
+        challenge: BigInt(channelData.channel.challenge),
+        nonce: BigInt(channelData.channel.nonce)
+      };
+
+      const channelIdHash = getChannelId(channel, chainId);
+
+      // Build the state from resize response
+      const state = {
+        intent: resizeData.state.intent,
+        version: BigInt(resizeData.state.version),
+        data: resizeData.state.state_data || '0x',
+        allocations: resizeData.state.allocations.map(a => ({
+          destination: getAddress(a.destination),
+          token: getAddress(a.token),
+          amount: BigInt(a.amount)
+        })),
+        sigs: []
+      };
+
+      // Sign the state with user's wallet
+      const packedState = getPackedState(channelIdHash, state);
+      this.log('Signing state update...');
+      const userSignature = await walletClient.signMessage({
+        account: this.userAddress,
+        message: { raw: packedState }
+      });
+
+      const signedState = {
+        ...state,
+        sigs: [userSignature, resizeData.server_signature]
+      };
+
+      this.log('Submitting state to custody contract...');
+
+      // Submit to custody contract using resize function
+      const txHash = await nitroliteService.resize(channelIdHash, signedState, []);
+      this.log(`Tx submitted: ${txHash.slice(0, 10)}...`);
+
+      this.log('Waiting for confirmation...');
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        this.log('Step 4/5: State submitted to custody! Funds should be in custody now.');
+
+        // Step 5: Withdraw from custody
+        this.pendingWithdrawal.step = 'withdraw';
+        await this.withdrawFromCustodyFinal(chainConfig, amount);
+      } else {
+        this.log('Custody submission failed', 'error');
+        this.pendingWithdrawal = null;
+      }
+
+    } catch (error) {
+      const errorMsg = error.cause?.message || error.shortMessage || error.message;
+      this.log(`Failed to submit to custody: ${errorMsg}`, 'error');
+      console.error('Submit to custody error:', error);
+      this.pendingWithdrawal = null;
+    }
+  }
+
+  // Final step: Withdraw from custody to wallet (step 5 of withdrawal flow)
+  async withdrawFromCustodyFinal(chainConfig, amount) {
+    try {
+      this.log(`Step 5/5: Withdrawing ${(amount / 1_000_000).toFixed(2)} USDC from custody to wallet...`);
+
+      const walletClient = createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+
+      const nitroliteService = new NitroliteService(
+        publicClient,
+        { custody: chainConfig.custody },
+        walletClient,
+        this.userAddress
+      );
+
+      // Withdraw from custody
+      const withdrawTxHash = await nitroliteService.withdraw(chainConfig.token, BigInt(amount));
+      this.log(`Withdraw tx: ${withdrawTxHash.slice(0, 10)}...`);
+
+      const withdrawReceipt = await publicClient.waitForTransactionReceipt({ hash: withdrawTxHash });
+
+      if (withdrawReceipt.status === 'success') {
+        this.log(`✓ Withdrawal complete! ${(amount / 1_000_000).toFixed(2)} USDC sent to your wallet on ${chainConfig.name}!`);
+        this.pendingWithdrawal = null;
+
+        // Refresh balances
+        this.getBalances();
+        this.getChannels();
+      } else {
+        this.log('Withdraw transaction failed', 'error');
+        this.pendingWithdrawal = null;
+      }
+
+    } catch (error) {
+      const errorMsg = error.cause?.message || error.shortMessage || error.message;
+      this.log(`Withdraw from custody failed: ${errorMsg}`, 'error');
+      console.error('Withdraw from custody error:', error);
+      this.pendingWithdrawal = null;
+    }
+  }
+
+  async handleCloseChannelResponse(data) {
     console.log('Close channel response:', data);
-    if (data?.success || data?.channel_id) {
-      this.log('Channel closed! Funds will be sent to your wallet on-chain.');
-      this.log('Check your wallet on the testnet for the withdrawn tokens.');
-      // Refresh channels and balances
+
+    // If server returns final state for on-chain close, submit it
+    if (data?.channel_id && data?.state && data?.server_signature) {
+      this.log('Received final state, closing channel on-chain...');
+      await this.submitCloseChannelOnChain(data);
+    } else if (data?.success || data?.channel_id) {
+      // Channel closed off-chain only
+      this.log('Channel closed! Funds returned to off-chain balance.');
       this.getChannels();
       this.getBalances();
     } else {
@@ -781,39 +1535,243 @@ class YellowPaymentApp {
     }
   }
 
+  async submitCloseChannelOnChain(closeData) {
+    try {
+      const channelId = closeData.channel_id;
+      let onChainData = this.onChainChannels.get(channelId);
+
+      // If not in our local registry, try to reconstruct from server broadcast data
+      if (!onChainData) {
+        const serverChannel = this.serverChannels.get(channelId);
+        if (serverChannel) {
+          this.log('Reconstructing channel from server data...');
+
+          // Extract the broker address from close_channel response allocations
+          // The second allocation destination is the broker
+          const brokerAddress = closeData.state?.allocations?.[1]?.destination;
+          if (!brokerAddress) {
+            this.log('Cannot determine broker address from close response', 'error');
+            return;
+          }
+
+          const chainId = serverChannel.chain_id;
+          const chainConfig = CHAIN_CONFIG[chainId];
+          if (!chainConfig) {
+            this.log(`Unsupported chain: ${chainId}`, 'error');
+            return;
+          }
+
+          // Reconstruct channel parameters
+          const channel = {
+            participants: [getAddress(serverChannel.participant), getAddress(brokerAddress)],
+            adjudicator: getAddress(serverChannel.adjudicator),
+            challenge: BigInt(serverChannel.challenge),
+            nonce: BigInt(serverChannel.nonce)
+          };
+
+          // Calculate channel ID to verify
+          const calculatedChannelId = getChannelId(channel, chainId);
+          this.log(`Calculated channel ID: ${calculatedChannelId.slice(0, 10)}...`);
+
+          onChainData = {
+            channel,
+            channelId: calculatedChannelId,
+            chainId,
+            chainConfig
+          };
+        } else {
+          this.log('Channel not found in registry or server data. It may have been closed already.');
+          this.getChannels();
+          this.getBalances();
+          return;
+        }
+      }
+
+      const { channel, channelId: channelIdHash, chainId, chainConfig } = onChainData;
+
+      // Switch network if needed
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      const currentChainIdDecimal = parseInt(currentChainId, 16);
+
+      if (currentChainIdDecimal !== chainId) {
+        this.log(`Switching to ${chainConfig.name}...`);
+        try {
+          await window.ethereum.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: `0x${chainId.toString(16)}` }]
+          });
+          this.walletClient = createWalletClient({
+            chain: chainConfig.chain,
+            transport: custom(window.ethereum),
+            account: this.userAddress
+          });
+          this.publicClient = createPublicClient({
+            chain: chainConfig.chain,
+            transport: http()
+          });
+        } catch (switchError) {
+          this.log(`Please switch to ${chainConfig.name} in your wallet`, 'error');
+          return;
+        }
+      }
+
+      // Initialize NitroliteService
+      const nitroliteService = new NitroliteService(
+        this.publicClient,
+        { custody: chainConfig.custody },
+        this.walletClient,
+        this.userAddress
+      );
+
+      // Prepare the final state (intent should be FINALIZE = 2)
+      const finalState = {
+        intent: closeData.state.intent || 2, // StateIntent.FINALIZE
+        version: BigInt(closeData.state.version),
+        data: closeData.state.state_data || '0x',
+        allocations: closeData.state.allocations.map(a => ({
+          destination: a.destination,
+          token: a.token,
+          amount: BigInt(a.amount)
+        })),
+        sigs: []
+      };
+
+      // Get packed state for signing
+      const packedState = getPackedState(channelIdHash, finalState);
+
+      // Sign with main wallet
+      this.log('Requesting wallet signature for close...');
+      const userSignature = await this.walletClient.signMessage({
+        account: this.userAddress,
+        message: { raw: packedState }
+      });
+
+      // Add both signatures
+      const signedFinalState = {
+        ...finalState,
+        sigs: [userSignature, closeData.server_signature]
+      };
+
+      this.log('Closing channel on-chain (requires wallet approval)...');
+      console.log('Close channel on-chain data:', { channelIdHash, signedFinalState });
+
+      // Submit close transaction
+      const txHash = await nitroliteService.close(channelIdHash, signedFinalState, []);
+      this.log(`Close tx submitted: ${txHash.slice(0, 10)}...`);
+
+      // Wait for confirmation
+      this.log('Waiting for confirmation...');
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        this.log('Channel closed on-chain! Funds released to custody.');
+
+        // Now withdraw from custody to wallet
+        // Use the stored deposited amount (more reliable than close allocation which may be 0)
+        const depositedAmount = onChainData.depositedAmount || 0;
+        const tokenAddress = onChainData.tokenAddress || closeData.state.allocations[0]?.token;
+
+        if (depositedAmount > 0 && tokenAddress) {
+          const withdrawAmount = BigInt(depositedAmount);
+
+          this.log(`Withdrawing ${Number(withdrawAmount) / 1_000_000} USDC from custody...`);
+
+          try {
+            const withdrawTxHash = await nitroliteService.withdraw(tokenAddress, withdrawAmount);
+            this.log(`Withdraw tx submitted: ${withdrawTxHash.slice(0, 10)}...`);
+
+            const withdrawReceipt = await this.publicClient.waitForTransactionReceipt({ hash: withdrawTxHash });
+
+            if (withdrawReceipt.status === 'success') {
+              this.log('Withdrawal complete! Tokens sent to your wallet.');
+              this.log(`Check ${chainConfig.name} for your USDC.`);
+            } else {
+              this.log('Withdraw transaction failed', 'error');
+            }
+          } catch (withdrawError) {
+            const withdrawErrorMsg = withdrawError.cause?.message || withdrawError.shortMessage || withdrawError.message;
+            this.log(`Withdraw failed: ${withdrawErrorMsg}`, 'error');
+            console.error('Withdraw error:', withdrawError);
+          }
+        } else {
+          this.log('No funds to withdraw (no deposit recorded).');
+        }
+
+        this.onChainChannels.delete(channelId);
+        this.getChannels();
+        this.getBalances();
+      } else {
+        this.log('On-chain close transaction failed', 'error');
+      }
+    } catch (error) {
+      const errorDetails = error.cause?.message || error.cause?.shortMessage || error.shortMessage || error.message;
+      this.log(`On-chain close failed: ${errorDetails}`, 'error');
+      console.error('Close channel on-chain error:', error);
+    }
+  }
+
   renderChannelsList() {
     const container = this.elements.channelsList;
+    let html = '';
 
-    if (this.channels.length === 0) {
-      container.innerHTML = '<p style="color: #888;">No channels found. Create one to withdraw funds on-chain.</p>';
-      return;
-    }
+    // Show on-chain channels (tracked locally)
+    if (this.onChainChannels.size > 0) {
+      html += '<p style="color: #ffd700; font-size: 0.85rem; margin-bottom: 0.5rem;">On-Chain Channels:</p>';
+      this.onChainChannels.forEach((data, channelId) => {
+        const chainName = data.chainConfig?.name || `Chain ${data.chainId}`;
+        const channelIdShort = channelId.slice(0, 10) + '...';
 
-    const html = this.channels.map(ch => {
-      const chainName = CHAIN_CONFIG[ch.chain_id]?.name || `Chain ${ch.chain_id}`;
-      const amount = ch.amount ? (parseInt(ch.amount) / 1_000_000).toFixed(2) : '0.00';
-      const status = ch.status || 'unknown';
-      const channelIdShort = ch.channel_id ? ch.channel_id.slice(0, 10) + '...' : 'N/A';
-
-      return `
-        <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem;">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-              <strong>${chainName}</strong><br>
-              <span style="color: #888; font-size: 0.8rem;">${channelIdShort}</span><br>
-              <span style="color: #4caf50;">${amount} USDC</span>
-              <span style="color: #888;"> (${status})</span>
-            </div>
-            ${status === 'open' ? `
-              <button onclick="window.app.closeChannel('${ch.channel_id}')"
+        html += `
+          <div style="background: rgba(255,215,0,0.1); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid rgba(255,215,0,0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong>${chainName}</strong><br>
+                <span style="color: #888; font-size: 0.8rem;">${channelIdShort}</span><br>
+                <span style="color: #4caf50;">On-Chain</span>
+              </div>
+              <button onclick="window.app.closeChannel('${channelId}')"
                 style="background: #f44336; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">
                 Close & Withdraw
               </button>
-            ` : ''}
+            </div>
           </div>
-        </div>
-      `;
-    }).join('');
+        `;
+      });
+    }
+
+    // Show off-chain channels from server
+    if (this.channels.length > 0) {
+      html += '<p style="color: #aaa; font-size: 0.85rem; margin-bottom: 0.5rem; margin-top: 0.5rem;">Off-Chain Channels:</p>';
+      html += this.channels.map(ch => {
+        const chainName = CHAIN_CONFIG[ch.chain_id]?.name || `Chain ${ch.chain_id}`;
+        const amount = ch.amount ? (parseInt(ch.amount) / 1_000_000).toFixed(2) : '0.00';
+        const status = ch.status || 'unknown';
+        const channelIdShort = ch.channel_id ? ch.channel_id.slice(0, 10) + '...' : 'N/A';
+
+        return `
+          <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong>${chainName}</strong><br>
+                <span style="color: #888; font-size: 0.8rem;">${channelIdShort}</span><br>
+                <span style="color: #4caf50;">${amount} USDC</span>
+                <span style="color: #888;"> (${status})</span>
+              </div>
+              ${status === 'open' ? `
+                <button onclick="window.app.closeChannel('${ch.channel_id}')"
+                  style="background: #f44336; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">
+                  Close & Withdraw
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    if (html === '') {
+      html = '<p style="color: #888;">No channels found. Create one to withdraw funds on-chain.</p>';
+    }
 
     container.innerHTML = html;
   }

@@ -334,3 +334,310 @@ The main wallet only signs the EIP-712 auth_verify (one-time authorization). The
 - No MetaMask popup for every transaction (better UX)
 - Session keys can have limited scope/allowances
 - If compromised, only affects the session (not main wallet)
+
+---
+
+## Bug 7: Chain mismatch when submitting on-chain transactions (SOLVED)
+
+**Error Message:**
+```
+The current chain of the wallet (id: 1) does not match the target chain for the transaction (id: 11155111 – Sepolia). Current Chain ID: 1 Expected Chain ID: 11155111 – Sepolia
+```
+
+**Cause:**
+When submitting on-chain transactions (create channel, resize, close), the wallet must be on the correct network. If the user's MetaMask is on Ethereum mainnet (chain ID 1) but the transaction targets Sepolia (chain ID 11155111), viem will throw a chain mismatch error during `writeContract`.
+
+**Solution:**
+Check the current chain and request a network switch before submitting transactions:
+
+```javascript
+async submitChannelOnChain(channelData) {
+  const chainId = parseInt(this.elements.chainSelect.value);
+  const chainConfig = CHAIN_CONFIG[chainId];
+
+  // Switch to the correct network if needed
+  const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+  const currentChainIdDecimal = parseInt(currentChainId, 16);
+
+  if (currentChainIdDecimal !== chainId) {
+    this.log(`Switching to ${chainConfig.name}...`);
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: `0x${chainId.toString(16)}` }]
+      });
+      // Recreate wallet client after network switch
+      this.walletClient = createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
+      this.publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+    } catch (switchError) {
+      this.log(`Please switch to ${chainConfig.name} in your wallet`, 'error');
+      return;
+    }
+  }
+
+  // Continue with on-chain submission...
+}
+```
+
+**Note:** After switching networks, you must recreate the viem wallet/public clients with the new chain configuration.
+
+---
+
+## Bug 8: Authentication timeout race condition (SOLVED)
+
+**Error Message:**
+```
+[18:39:50] Authentication successful!
+[18:39:50] Failed to connect wallet: Authentication timeout
+```
+
+**Cause:**
+The authentication flow uses a Promise with a setTimeout for timeout handling. If the timeout is too short (e.g., 15 seconds) and the user is slow to approve the MetaMask EIP-712 signature, the timeout fires and rejects the Promise. However, when the user finally signs, the auth_verify response arrives and tries to resolve the already-rejected Promise.
+
+This causes:
+1. The "Authentication timeout" error message
+2. The Promise rejection propagates, preventing button state updates
+3. The actual successful auth happens but the UI doesn't reflect it
+
+**Solution:**
+1. Increase the timeout to allow for MetaMask signing (60+ seconds)
+2. Store the timeout ID and clear it when auth succeeds
+3. Check `isAuthenticated` before rejecting
+
+```javascript
+async authenticate() {
+  return new Promise(async (resolve, reject) => {
+    this.log('Authenticating with Clearnode...');
+    this.pendingAuthResolve = resolve;
+
+    // ... setup auth request ...
+
+    this.ws.send(authMessage);
+
+    // Store timeout ID so we can clear it on success
+    this.authTimeoutId = setTimeout(() => {
+      if (!this.isAuthenticated) {
+        this.pendingAuthResolve = null;
+        reject(new Error('Authentication timeout'));
+      }
+    }, 60000);  // 60 second timeout for MetaMask signing
+  });
+}
+
+// In the auth_verify response handler:
+case 'auth_verify':
+  this.log('Authentication successful!');
+  this.isAuthenticated = true;
+  // Clear the auth timeout
+  if (this.authTimeoutId) {
+    clearTimeout(this.authTimeoutId);
+    this.authTimeoutId = null;
+  }
+  if (this.pendingAuthResolve) {
+    this.pendingAuthResolve();
+    this.pendingAuthResolve = null;
+  }
+  break;
+```
+
+---
+
+## Bug 9: On-chain channel creation requires both signatures (SOLVED)
+
+**Error Message:**
+```
+Transaction failed during operation 'createChannel'
+Contract call simulation failed for function 'prepareCreateChannel'
+```
+
+**Cause:**
+The custody contract's `create` function requires the initial state to have signatures from BOTH channel participants:
+1. The user's signature (first participant)
+2. The server's signature (provided in `create_channel` response as `server_signature`)
+
+Initially, we were only passing the server signature, or signing with the wrong key (session key instead of main wallet).
+
+**Solution:**
+1. The `create_channel` WebSocket response includes `server_signature` - this is the server's signature over the initial state
+2. The user must sign the packed state using their main wallet (the address that appears as `participants[0]`)
+3. Pass both signatures in the correct order: `[userSignature, serverSignature]`
+
+```javascript
+// Get channel data from create_channel response
+const { channel, state, server_signature } = channelData;
+
+// Calculate channel ID
+const channelIdCalculated = getChannelId(channel, chainId);
+
+// Pack the state for signing
+const packedState = getPackedState(channelIdCalculated, unsignedState);
+
+// Sign with main wallet (the first participant)
+const userSignature = await walletClient.signMessage({
+  account: userAddress,
+  message: { raw: packedState }
+});
+
+// State needs sigs in order: [userSignature, serverSignature]
+const signedState = {
+  ...unsignedState,
+  sigs: [userSignature, server_signature]
+};
+
+// Submit to blockchain
+const txHash = await nitroliteService.createChannel(channel, signedState);
+```
+
+**Key insight:** The SDK's `WalletStateSigner` uses `walletClient.signMessage({ message: { raw: packedState } })` which signs the keccak256 hash of the packed state with the Ethereum message prefix. The contract expects this format.
+
+---
+
+## Bug 10: WebSocket disconnects frequently (SOLVED)
+
+**Symptom:**
+```
+[18:52:52] Disconnected from Yellow Network
+[18:52:55] Connecting to Yellow Network...
+[18:52:56] Connected to Yellow Network!
+[18:53:56] Disconnected from Yellow Network
+```
+
+**Cause:**
+The WebSocket connection to `wss://clearnet-sandbox.yellow.com/ws` disconnects approximately every 60 seconds. This appears to be a server-side idle timeout. When disconnected:
+1. The authentication state is lost
+2. Ongoing operations (like channel creation) are interrupted
+3. Users see "Please authenticate first" errors
+
+**Solution:**
+Implemented auto-reconnect with re-authentication. When the WebSocket reconnects and a wallet was previously connected, the app automatically:
+1. Re-authenticates with the Clearnode (generates new session key)
+2. Fetches updated balances
+3. Refreshes channels list
+4. Restores button states
+
+```javascript
+this.ws.onopen = async () => {
+  this.elements.wsStatus.classList.add('connected');
+  this.elements.wsStatusText.textContent = 'Connected to Yellow Network';
+  this.log('Connected to Yellow Network!');
+
+  // Auto re-authenticate if wallet was previously connected
+  if (this.userAddress && !this.isAuthenticated) {
+    this.log('Re-authenticating...');
+    this.elements.connectBtn.textContent = 'Authenticating...';
+    try {
+      await this.authenticate();
+      this.log('Re-authenticated successfully!');
+      // Restore UI state
+      this.elements.connectBtn.textContent = 'Connected';
+      this.elements.connectBtn.disabled = true;
+      // ... enable other buttons ...
+      // Refresh data after re-authentication
+      await this.getBalances();
+      await this.getChannels();
+    } catch (error) {
+      this.log(`Re-authentication failed: ${error.message}`, 'error');
+      this.elements.connectBtn.textContent = 'Reconnect';
+      this.elements.connectBtn.disabled = false;
+    }
+  }
+};
+
+this.ws.onclose = () => {
+  this.isAuthenticated = false;
+  // Update button to show reconnecting state
+  if (this.userAddress) {
+    this.elements.connectBtn.textContent = 'Reconnecting...';
+    this.elements.connectBtn.disabled = true;
+  }
+  // Auto-reconnect after 3 seconds
+  setTimeout(() => this.connectWebSocket(), 3000);
+};
+```
+
+**Note:** Each reconnect generates a new session key for security. The user only needs to sign the initial EIP-712 auth (once per browser session). Subsequent reconnects use the existing wallet connection without requiring new MetaMask popups.
+
+---
+
+## Bug 11: On-chain channel data lost on page reload (LIMITATION)
+
+**Symptom:**
+After creating a channel on-chain and reloading the page, the "Close & Withdraw" button disappears because the on-chain channel data is stored in memory only.
+
+**Cause:**
+The `onChainChannels` Map that tracks channels submitted to the blockchain is stored in the app's JavaScript memory. On page reload:
+1. The Map is reinitialized as empty
+2. The channel still exists on-chain but the app doesn't know about it
+3. The `get_channels` WebSocket call returns empty because the server may not track on-chain-only channels
+
+**Solution:**
+Store on-chain channel data in localStorage:
+
+```javascript
+// Save after on-chain creation
+this.onChainChannels.set(channelData.channel_id, data);
+localStorage.setItem('onChainChannels', JSON.stringify([...this.onChainChannels]));
+
+// Restore on app init
+const stored = localStorage.getItem('onChainChannels');
+if (stored) {
+  this.onChainChannels = new Map(JSON.parse(stored));
+}
+```
+
+**Alternative:** Query the custody contract directly using `NitroliteService.getOpenChannels(userAddress)` to find all on-chain channels.
+
+---
+
+## On-Chain Channel Flow Summary
+
+Based on testing and the [GitHub discussion](https://github.com/layer-3/docs/discussions/20), here's the complete flow for on-chain withdrawals:
+
+### Getting Test Tokens On-Chain
+
+1. **Faucet tokens go to unified OFF-CHAIN balance** - NOT directly to your wallet
+2. **To get tokens ON-CHAIN:**
+   - Create channel via WebSocket → Get signed initial state from server
+   - Submit channel creation to blockchain (custody contract)
+   - Resize channel to allocate funds (moves from off-chain to on-chain channel)
+   - Close channel to withdraw (sends tokens to your wallet)
+
+### Channel Lifecycle
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     OFF-CHAIN (WebSocket)                        │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. create_channel → Returns channel + state + server_signature  │
+│ 2. resize_channel → Allocates funds from ledger to channel      │
+│ 3. close_channel  → Returns final state + server_signature      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     ON-CHAIN (Blockchain)                        │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. NitroliteService.createChannel(channel, signedState)         │
+│    - User signs state with main wallet                          │
+│    - Submit with both signatures: [userSig, serverSig]          │
+│                                                                  │
+│ 2. NitroliteService.close(channelId, finalState, proofs)        │
+│    - User signs final state with main wallet                    │
+│    - Submit close transaction                                    │
+│    - Tokens sent to funds_destination address                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Points
+
+- **Custody Contract (Sepolia):** `0x019B65A265EB3363822f2752141b3dF16131b262`
+- **Test Token (ytest.usd):** `0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb`
+- **Signatures order:** Always `[userSignature, serverSignature]`
+- **State signing:** Use `getPackedState(channelId, state)` then sign with `walletClient.signMessage({ message: { raw: packedState } })`
