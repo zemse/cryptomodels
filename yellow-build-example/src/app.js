@@ -209,6 +209,10 @@ class YellowPaymentApp {
           this.handleResizeChannelResponse(responseData);
           break;
 
+        case 'bu':  // Balance update notification from server
+          this.handleBalanceUpdate(responseData);
+          break;
+
         default:
           this.log(`Response [${method}]: ${JSON.stringify(responseData).slice(0, 100)}`);
       }
@@ -305,6 +309,25 @@ class YellowPaymentApp {
       } else {
         this.log('No balance found. Deposit funds to get started.');
         this.ledgerBalance = 0;
+      }
+    }
+  }
+
+  // Handle balance update notifications (method: 'bu')
+  handleBalanceUpdate(data) {
+    console.log('Balance update notification:', data);
+    if (data && typeof data === 'object') {
+      const updates = data.balance_updates || [];
+      if (updates.length > 0) {
+        let totalBalance = 0;
+        updates.forEach(b => {
+          const amount = parseInt(b.amount || '0', 10);
+          totalBalance += amount;
+          this.log(`Balance updated: ${(amount / 1_000_000).toFixed(2)} ${b.asset}`);
+        });
+        this.ledgerBalance = totalBalance;
+        this.balance = totalBalance;
+        this.updateBalanceDisplay();
       }
     }
   }
