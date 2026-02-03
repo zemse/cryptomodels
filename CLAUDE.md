@@ -6,7 +6,7 @@ This is monorepo for hackathon project https://ethglobal.com/events/hackmoney202
 other part of app.
 - cli TBD
 - frontend TBD
-
+- nitrolite: yellow source code and docs for contracts, sdk and more.
 
 ## Using skills
 
@@ -15,6 +15,9 @@ other part of app.
 - The file might be huge, and various aspects of technology might be segregated using markdown
 headings. First see the tree and then read relevant part accordingly.
 - Web links might be present, use them if we need to expand on the context.
+
+As a special case for yellow, we have cloned their repo nitrolite in project root. we can refer
+to the code as needed.
 
 ## Updating Skills
 

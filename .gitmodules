@@ -1,0 +1,3 @@
+[submodule "nitrolite"]
+	path = nitrolite
+	url = git@github.com:erc7824/nitrolite.git

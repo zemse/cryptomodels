@@ -600,23 +600,24 @@ if (stored) {
 
 Based on testing and the [GitHub discussion](https://github.com/layer-3/docs/discussions/20), here's the complete flow for on-chain withdrawals:
 
-### Getting Test Tokens On-Chain
+### Getting Test Tokens On-Chain - SIMPLIFIED FLOW
+
+**The correct simple 3-step flow:**
 
 1. **Faucet tokens go to unified OFF-CHAIN balance** - NOT directly to your wallet
-2. **To get tokens ON-CHAIN:**
-   - Create channel via WebSocket → Get signed initial state from server
-   - Submit channel creation to blockchain (custody contract)
-   - Resize channel to allocate funds (moves from off-chain to on-chain channel)
-   - Close channel to withdraw (sends tokens to your wallet)
+2. **To get tokens ON-CHAIN (Simple 3-step):**
+   - **Step 1**: Create channel via WebSocket (off-chain only)
+   - **Step 2**: Resize with **positive** `resize_amount` (moves from ledger to on-chain custody)
+   - **Step 3**: Close channel on-chain (withdraws to wallet)
 
-### Channel Lifecycle
+### Channel Lifecycle - CORRECTED
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     OFF-CHAIN (WebSocket)                        │
 ├─────────────────────────────────────────────────────────────────┤
 │ 1. create_channel → Returns channel + state + server_signature  │
-│ 2. resize_channel → Allocates funds from ledger to channel      │
+│ 2. resize_channel (resize_amount: +amount) → Moves to custody   │
 │ 3. close_channel  → Returns final state + server_signature      │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -624,20 +625,79 @@ Based on testing and the [GitHub discussion](https://github.com/layer-3/docs/dis
 ┌─────────────────────────────────────────────────────────────────┐
 │                     ON-CHAIN (Blockchain)                        │
 ├─────────────────────────────────────────────────────────────────┤
-│ 1. NitroliteService.createChannel(channel, signedState)         │
-│    - User signs state with main wallet                          │
-│    - Submit with both signatures: [userSig, serverSig]          │
-│                                                                  │
-│ 2. NitroliteService.close(channelId, finalState, proofs)        │
+│ NitroliteService.close(channelId, finalState, [])               │
 │    - User signs final state with main wallet                    │
 │    - Submit close transaction                                    │
 │    - Tokens sent to funds_destination address                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### IMPORTANT: resize_amount vs allocate_amount
+
+| Parameter | Direction | Use Case |
+|-----------|-----------|----------|
+| `allocate_amount` | Ledger → Channel (off-chain) | Fund existing channel |
+| `resize_amount` (positive) | Ledger → On-chain custody | **Withdrawal flow** |
+| `resize_amount` (negative) | Channel → Custody | Reduce channel size |
+
 ### Key Points
 
+- **You do NOT need to submit channel creation on-chain first**
+- **Use `resize_amount` (positive) to move from ledger to custody**
 - **Custody Contract (Sepolia):** `0x019B65A265EB3363822f2752141b3dF16131b262`
 - **Test Token (ytest.usd):** `0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb`
 - **Signatures order:** Always `[userSignature, serverSignature]`
 - **State signing:** Use `getPackedState(channelId, state)` then sign with `walletClient.signMessage({ message: { raw: packedState } })`
+
+### What Was Wrong
+
+The initial implementation tried a complex 5-step flow:
+```
+create → submit on-chain → allocate → negative resize → submit resize → withdraw
+```
+
+This was caused by misunderstanding the difference between `allocate_amount` and `resize_amount`:
+- `allocate_amount` moves funds from ledger to channel (OFF-CHAIN only)
+- `resize_amount` (positive) moves funds from ledger to ON-CHAIN custody
+
+The correct 3-step flow is:
+```
+create → resize (+amount) → close on-chain
+```
+
+### Implementation Status
+
+✅ **FIXED** - The simplified 3-step withdrawal flow has been implemented in `src/app.js`:
+
+1. `withdrawToWallet()` - Initiates withdrawal with proper balance checks
+2. `handleCreateChannelResponse()` - Triggers resize with positive amount
+3. `handleResizeChannelResponse()` - Triggers close channel
+4. `handleCloseChannelResponse()` - Submits close transaction on-chain
+5. `submitCloseOnChainSimple()` - New method to handle final on-chain close
+
+The old complex methods have been commented out with deprecation notes:
+- `allocateFundsToChannel()`
+- `resizeNegativeForWithdrawal()`
+- `requestWithdrawalResize()`
+- `submitStateToCustody()`
+- `withdrawFromCustodyFinal()`
+
+### Testing
+
+To test the fixed withdrawal flow:
+1. Connect wallet and authenticate
+2. Get test tokens from faucet (off-chain balance)
+3. Click "Withdraw to Wallet"
+4. Approve MetaMask signature for final state (once)
+5. Approve MetaMask transaction for on-chain close (once)
+6. Check Sepolia wallet for ytest.usd tokens
+
+Expected logs:
+```
+Starting withdrawal: 1.0 USDC to Ethereum Sepolia
+Step 1/3: Creating off-chain channel...
+Step 2/3: Moving funds to on-chain custody...
+Step 3/3: Closing channel to withdraw to wallet...
+Submitting close transaction on-chain...
+✓ Withdrawal complete!
+```
