@@ -106,11 +106,29 @@ class YellowPaymentApp {
       onChainChannelChainSelect: this.getElement('onChainChannelChainSelect'),
       onChainChannelPartnerKey: this.getElement('onChainChannelPartnerKey'),
       onChainChannelAmount: this.getElement('onChainChannelAmount'),
-      createOnChainChannelBtn: this.getElement('createOnChainChannelBtn')
+      createOnChainChannelBtn: this.getElement('createOnChainChannelBtn'),
+      // Wallet connection options
+      walletType: this.getElement('walletType'),
+      pkInput: this.getElement('pkInput'),
+      pkInputWrapper: this.getElement('pkInputWrapper')
     };
+
+    // Wallet type state
+    this.walletConnectionType = 'metamask';
+    this.privateKeyAccount = null;
+    this.walletConnectProvider = null;
 
     // Event listeners
     this.elements.connectBtn?.addEventListener('click', () => this.connectWallet());
+
+    // Wallet type selection handler
+    this.elements.walletType?.addEventListener('change', (e) => {
+      this.walletConnectionType = e.target.value;
+      const showPk = e.target.value === 'privatekey';
+      if (this.elements.pkInputWrapper) {
+        this.elements.pkInputWrapper.style.display = showPk ? 'block' : 'none';
+      }
+    });
     this.elements.createSessionBtn?.addEventListener('click', () => this.createSession());
     this.elements.createChannelBtn?.addEventListener('click', () => this.createChannel());
     this.elements.refreshChannelsBtn?.addEventListener('click', () => this.getChannels());
@@ -396,10 +414,32 @@ class YellowPaymentApp {
 
       console.log('EIP-712 typed data:', JSON.stringify(typedData, null, 2));
 
-      const signature = await window.ethereum.request({
-        method: 'eth_signTypedData_v4',
-        params: [this.userAddress, JSON.stringify(typedData)]
-      });
+      let signature;
+
+      if (this.walletConnectionType === 'privatekey' && this.privateKeyAccount) {
+        // Sign with private key using viem's signTypedData
+        signature = await this.privateKeyAccount.signTypedData({
+          domain: typedData.domain,
+          types: typedData.types,
+          primaryType: typedData.primaryType,
+          message: typedData.message
+        });
+        this.log('Signed with private key (local)');
+      } else if (this.walletConnectionType === 'walletconnect' && this.walletConnectProvider) {
+        // Sign via WalletConnect
+        signature = await this.walletConnectProvider.request({
+          method: 'eth_signTypedData_v4',
+          params: [this.userAddress, JSON.stringify(typedData)]
+        });
+        this.log('Signed via WalletConnect');
+      } else {
+        // Sign via MetaMask / browser wallet
+        signature = await window.ethereum.request({
+          method: 'eth_signTypedData_v4',
+          params: [this.userAddress, JSON.stringify(typedData)]
+        });
+        this.log('Signed via browser wallet');
+      }
 
       console.log('EIP-712 signature:', signature);
 
@@ -474,35 +514,18 @@ class YellowPaymentApp {
   }
 
   async connectWallet() {
-    if (!window.ethereum) {
-      this.log('Please install MetaMask!', 'error');
-      alert('Please install MetaMask to use this application');
-      return;
-    }
+    const walletType = this.elements.walletType?.value || 'metamask';
+    this.walletConnectionType = walletType;
 
     try {
-      this.log('Requesting wallet connection...');
+      this.log(`Connecting via ${walletType}...`);
 
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts'
-      });
-
-      this.userAddress = accounts[0];
-
-      // Get the default chain for this environment
-      const defaultChainId = this.environment === 'mainnet' ? 1 : 11155111;
-      const chainConfig = this.config.chains[defaultChainId];
-
-      if (chainConfig?.chain) {
-        this.publicClient = createPublicClient({
-          chain: chainConfig.chain,
-          transport: http()
-        });
-        this.walletClient = createWalletClient({
-          chain: chainConfig.chain,
-          transport: custom(window.ethereum),
-          account: this.userAddress
-        });
+      if (walletType === 'privatekey') {
+        await this.connectWithPrivateKey();
+      } else if (walletType === 'walletconnect') {
+        await this.connectWithWalletConnect();
+      } else {
+        await this.connectWithMetaMask();
       }
 
       this.elements.walletStatus?.classList.add('connected');
@@ -518,16 +541,6 @@ class YellowPaymentApp {
 
       this.log(`Wallet connected: ${this.userAddress.slice(0, 6)}...${this.userAddress.slice(-4)}`);
 
-      window.ethereum.on('accountsChanged', (accounts) => {
-        if (accounts.length === 0) {
-          this.log('Wallet disconnected');
-          location.reload();
-        } else {
-          this.log('Account changed - please reconnect');
-          location.reload();
-        }
-      });
-
       await this.authenticate();
 
       this.enableButtons();
@@ -542,6 +555,218 @@ class YellowPaymentApp {
       if (this.elements.connectBtn) {
         this.elements.connectBtn.textContent = 'Connect Wallet';
       }
+    }
+  }
+
+  async connectWithMetaMask() {
+    if (!window.ethereum) {
+      throw new Error('Please install MetaMask!');
+    }
+
+    const accounts = await window.ethereum.request({
+      method: 'eth_requestAccounts'
+    });
+
+    this.userAddress = accounts[0];
+
+    // Get the default chain for this environment
+    const defaultChainId = this.environment === 'mainnet' ? 8453 : 11155111; // Base for mainnet
+    const chainConfig = this.config.chains[defaultChainId];
+
+    if (chainConfig?.chain) {
+      this.publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+      this.walletClient = createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
+    }
+
+    window.ethereum.on('accountsChanged', (accounts) => {
+      if (accounts.length === 0) {
+        this.log('Wallet disconnected');
+        location.reload();
+      } else {
+        this.log('Account changed - please reconnect');
+        location.reload();
+      }
+    });
+  }
+
+  async connectWithPrivateKey() {
+    const pkInput = this.elements.pkInput?.value.trim();
+    if (!pkInput) {
+      throw new Error('Please enter a private key');
+    }
+
+    // Normalize key (add 0x if needed)
+    const normalizedKey = pkInput.replace(/^0x/, '');
+    const fullKey = `0x${normalizedKey}`;
+
+    try {
+      this.privateKeyAccount = privateKeyToAccount(fullKey);
+      this.userAddress = this.privateKeyAccount.address;
+
+      // Get the default chain for this environment
+      const defaultChainId = this.environment === 'mainnet' ? 8453 : 11155111;
+      const chainConfig = this.config.chains[defaultChainId];
+
+      if (chainConfig?.chain) {
+        this.publicClient = createPublicClient({
+          chain: chainConfig.chain,
+          transport: http()
+        });
+        // Create wallet client with private key account
+        this.walletClient = createWalletClient({
+          chain: chainConfig.chain,
+          transport: http(),
+          account: this.privateKeyAccount
+        });
+      }
+
+      this.log('Connected with private key (local signing)');
+    } catch (e) {
+      throw new Error('Invalid private key format');
+    }
+  }
+
+  async connectWithWalletConnect() {
+    // WalletConnect requires a project ID from WalletConnect Cloud
+    // For now, show instructions
+    const projectId = prompt(
+      'Enter your WalletConnect Project ID:\n\n' +
+      'Get one free at: https://cloud.walletconnect.com/\n\n' +
+      'Leave empty to cancel.'
+    );
+
+    if (!projectId) {
+      throw new Error('WalletConnect requires a Project ID');
+    }
+
+    // Dynamic import of WalletConnect
+    try {
+      this.log('Initializing WalletConnect...');
+
+      // Note: This requires @walletconnect/ethereum-provider to be installed
+      // npm install @walletconnect/ethereum-provider
+      // Using dynamic module name to bypass Vite static analysis
+      const wcModule = '@walletconnect/ethereum-provider';
+      const { EthereumProvider } = await import(/* @vite-ignore */ wcModule);
+
+      const provider = await EthereumProvider.init({
+        projectId: projectId,
+        chains: [this.environment === 'mainnet' ? 8453 : 11155111],
+        showQrModal: true,
+        metadata: {
+          name: 'Yellow Network Payment App',
+          description: 'Yellow Network state channel payments',
+          url: window.location.origin,
+          icons: ['https://yellow.org/favicon.ico']
+        }
+      });
+
+      await provider.connect();
+
+      const accounts = await provider.request({ method: 'eth_accounts' });
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts returned from WalletConnect');
+      }
+
+      this.userAddress = accounts[0];
+      this.walletConnectProvider = provider;
+
+      const defaultChainId = this.environment === 'mainnet' ? 8453 : 11155111;
+      const chainConfig = this.config.chains[defaultChainId];
+
+      if (chainConfig?.chain) {
+        this.publicClient = createPublicClient({
+          chain: chainConfig.chain,
+          transport: http()
+        });
+        this.walletClient = createWalletClient({
+          chain: chainConfig.chain,
+          transport: custom(provider),
+          account: this.userAddress
+        });
+      }
+
+      provider.on('disconnect', () => {
+        this.log('WalletConnect disconnected');
+        location.reload();
+      });
+
+      this.log('Connected via WalletConnect');
+    } catch (e) {
+      if (e.message?.includes('Cannot find module')) {
+        throw new Error(
+          'WalletConnect not installed. Run: npm install @walletconnect/ethereum-provider'
+        );
+      }
+      throw e;
+    }
+  }
+
+  // Helper: Get the appropriate provider for the current wallet type
+  getProvider() {
+    if (this.walletConnectionType === 'walletconnect' && this.walletConnectProvider) {
+      return this.walletConnectProvider;
+    }
+    return window.ethereum;
+  }
+
+  // Helper: Check and switch chain if needed
+  async ensureChain(chainId, chainConfig) {
+    if (this.walletConnectionType === 'privatekey') {
+      // Private key connections can't switch chains via UI
+      // The wallet client is already configured for the correct chain
+      this.log(`Using ${chainConfig.name} (private key mode)`);
+      return true;
+    }
+
+    const provider = this.getProvider();
+    if (!provider) {
+      throw new Error('No wallet provider available');
+    }
+
+    try {
+      const currentChainId = await provider.request({ method: 'eth_chainId' });
+      if (parseInt(currentChainId, 16) !== chainId) {
+        this.log(`Switching to ${chainConfig.name}...`);
+        await provider.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: `0x${chainId.toString(16)}` }]
+        });
+      }
+      return true;
+    } catch (error) {
+      this.log(`Failed to switch chain: ${error.message}`, 'error');
+      return false;
+    }
+  }
+
+  // Helper: Create a wallet client for a specific chain
+  createWalletClientForChain(chainConfig) {
+    if (this.walletConnectionType === 'privatekey' && this.privateKeyAccount) {
+      return createWalletClient({
+        chain: chainConfig.chain,
+        transport: http(),
+        account: this.privateKeyAccount
+      });
+    } else if (this.walletConnectionType === 'walletconnect' && this.walletConnectProvider) {
+      return createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(this.walletConnectProvider),
+        account: this.userAddress
+      });
+    } else {
+      return createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
     }
   }
 

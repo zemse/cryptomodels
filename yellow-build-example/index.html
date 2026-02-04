@@ -367,7 +367,21 @@
           <span id="testnet-walletStatusText">Wallet not connected</span>
         </div>
         <p class="address" id="testnet-userAddress"></p>
-        <button id="testnet-connectBtn">Connect Wallet</button>
+
+        <!-- Wallet Connection Options -->
+        <div class="wallet-options" id="testnet-walletOptions">
+          <select id="testnet-walletType" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border-radius: 4px; background: #2a2a2a; color: #fff; border: 1px solid #444;">
+            <option value="metamask">MetaMask / Browser Wallet</option>
+            <option value="walletconnect">WalletConnect</option>
+            <option value="privatekey">Private Key</option>
+          </select>
+          <div id="testnet-pkInputWrapper" style="display: none; margin-bottom: 0.5rem;">
+            <input type="password" id="testnet-pkInput" placeholder="Enter private key (with or without 0x)"
+                   style="width: 100%; padding: 0.5rem; border-radius: 4px; background: #2a2a2a; color: #fff; border: 1px solid #444; box-sizing: border-box;">
+            <p style="font-size: 0.7rem; color: #ff6b6b; margin-top: 0.25rem;">⚠️ Never use a private key with real funds!</p>
+          </div>
+          <button id="testnet-connectBtn">Connect Wallet</button>
+        </div>
       </div>
 
       <!-- Balance -->
@@ -523,7 +537,21 @@
           <span id="mainnet-walletStatusText">Wallet not connected</span>
         </div>
         <p class="address" id="mainnet-userAddress"></p>
-        <button id="mainnet-connectBtn">Connect Wallet</button>
+
+        <!-- Wallet Connection Options -->
+        <div class="wallet-options" id="mainnet-walletOptions">
+          <select id="mainnet-walletType" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border-radius: 4px; background: #2a2a2a; color: #fff; border: 1px solid #444;">
+            <option value="metamask">MetaMask / Browser Wallet</option>
+            <option value="walletconnect">WalletConnect</option>
+            <option value="privatekey">Private Key</option>
+          </select>
+          <div id="mainnet-pkInputWrapper" style="display: none; margin-bottom: 0.5rem;">
+            <input type="password" id="mainnet-pkInput" placeholder="Enter private key (with or without 0x)"
+                   style="width: 100%; padding: 0.5rem; border-radius: 4px; background: #2a2a2a; color: #fff; border: 1px solid #444; box-sizing: border-box;">
+            <p style="font-size: 0.7rem; color: #ff6b6b; margin-top: 0.25rem;">⚠️ Never use a private key with real funds!</p>
+          </div>
+          <button id="mainnet-connectBtn">Connect Wallet</button>
+        </div>
       </div>
 
       <!-- Balance -->
