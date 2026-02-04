@@ -819,7 +819,7 @@ class YellowPaymentApp {
     }
 
     try {
-      this.log(`Step 3/5: Resizing negatively to move ${(amount / 1_000_000).toFixed(2)} USDC to custody...`);
+      this.log(`Step 3/4: Resizing negatively to move ${(amount / 1_000_000).toFixed(2)} USDC to custody...`);
 
       const resizeMessage = await createResizeChannelMessage(
         this.messageSigner,
@@ -876,8 +876,8 @@ class YellowPaymentApp {
 
       // Store withdrawal context - 4-step flow:
       // 1. create_channel (off-chain) → get channel config
-      // 2. resize with allocate_amount (off-chain) → get state with allocations
-      // 3. submit on-chain with allocated state → lock funds in custody
+      // 2. submit on-chain with 0 allocations → channel exists in custody
+      // 3. resize_amount (positive) → server moves funds to on-chain custody
       // 4. close + withdraw (on-chain) → funds to wallet
       this.pendingWithdrawal = {
         step: 'create_channel',
@@ -1103,48 +1103,28 @@ class YellowPaymentApp {
       this.pendingChannelId = data.channel_id;
       this.pendingChannelData = data;
 
-      // Check if this is for SIMPLIFIED withdrawal flow (3 steps)
+      // Check if this is for withdrawal flow - submit on-chain FIRST, then allocate
+      // Server can only find channels that exist on-chain (Bug #12 workaround)
       if (this.pendingWithdrawal && this.pendingWithdrawal.step === 'create_channel') {
-        if (!data?.channel_id) {
-          this.log('Channel creation failed', 'error');
+        if (!data?.channel_id || !data?.channel || !data?.state || !data?.server_signature) {
+          this.log('Channel creation failed - missing data', 'error');
           this.pendingWithdrawal = null;
           return;
         }
 
-        const { amount, chainConfig } = this.pendingWithdrawal;
-        const channelId = data.channel_id;
+        const { amount, chainId, chainConfig } = this.pendingWithdrawal;
 
-        this.log('Step 2/4: Allocating funds to channel (off-chain)...');
-        this.log(`Moving ${(amount / 1_000_000).toFixed(2)} USDC from ledger to channel`);
+        this.log('Step 2/4: Submitting channel on-chain (with 0 allocations)...');
+        this.log('Server requires channel to exist on-chain before we can allocate funds');
 
-        // Add delay to avoid race condition with server persistence (Bug #12)
-        this.log('Waiting for server to persist channel...');
-        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+        // Update tracking
+        this.pendingWithdrawal.step = 'submit_on_chain';
+        this.pendingWithdrawal.channelId = data.channel_id;
+        this.pendingWithdrawal.channelData = data;
 
-        try {
-          // Step 2: Resize with allocate_amount = move from ledger TO channel (OFF-CHAIN)
-          // This gives us a new state with non-zero allocations
-          const resizeMessage = await createResizeChannelMessage(
-            this.messageSigner,
-            {
-              channel_id: channelId,
-              allocate_amount: BigInt(amount),  // allocate = ledger → channel (off-chain)
-              funds_destination: this.userAddress
-            }
-          );
-
-          // Update tracking
-          this.pendingWithdrawal.step = 'allocate_to_channel';
-          this.pendingWithdrawal.channelId = channelId;
-          this.pendingWithdrawal.channelData = data; // Store original channel config
-
-          this.ws.send(resizeMessage);
-          return; // Don't continue with other flows
-
-        } catch (error) {
-          this.log(`Allocate failed: ${error.message}`, 'error');
-          this.pendingWithdrawal = null;
-        }
+        // Submit on-chain first (with 0 allocations), then we can allocate
+        await this.submitChannelOnChainForWithdrawal(data, chainId, chainConfig);
+        return; // Flow continues in submitChannelOnChainForWithdrawal
       }
       // Check if this is for regular channel funding
       else if (this.pendingChannelFund) {
@@ -1286,7 +1266,7 @@ class YellowPaymentApp {
         if (this.pendingWithdrawal && this.pendingWithdrawal.step === 'submit_on_chain') {
           const { amount, channelId } = this.pendingWithdrawal;
           this.pendingWithdrawal.step = 'allocate_funds';
-          this.log(`Step 2/5: Channel on-chain, allocating ${(amount / 1_000_000).toFixed(2)} USDC...`);
+          this.log(`Step 2/4: Channel on-chain, allocating ${(amount / 1_000_000).toFixed(2)} USDC...`);
 
           // Allocate funds to the channel from off-chain ledger
           await this.allocateFundsToChannel(channelId, amount);
@@ -1325,6 +1305,250 @@ class YellowPaymentApp {
     }
   }
 
+  // Step 2 of withdrawal: Submit channel on-chain FIRST (with 0 allocations)
+  // Then allocate funds (server can only find on-chain channels)
+  async submitChannelOnChainForWithdrawal(channelData, chainId, chainConfig) {
+    try {
+      // Ensure correct network
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      if (parseInt(currentChainId, 16) !== chainId) {
+        this.log(`Switching to ${chainConfig.name}...`);
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: `0x${chainId.toString(16)}` }]
+        });
+      }
+
+      // Create clients
+      const walletClient = createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+
+      // Initialize NitroliteService
+      const nitroliteService = new NitroliteService(
+        publicClient,
+        { custody: chainConfig.custody },
+        walletClient,
+        this.userAddress
+      );
+
+      // Build channel object
+      const channel = {
+        participants: channelData.channel.participants,
+        adjudicator: channelData.channel.adjudicator,
+        challenge: BigInt(channelData.channel.challenge),
+        nonce: BigInt(channelData.channel.nonce)
+      };
+
+      // Calculate channel ID
+      const channelIdHash = getChannelId(channel, chainId);
+      this.log(`Channel ID: ${channelIdHash.slice(0, 10)}...`);
+
+      // Build state (0 allocations initially)
+      const initialState = {
+        intent: channelData.state.intent,
+        version: BigInt(channelData.state.version),
+        data: channelData.state.state_data || '0x',
+        allocations: channelData.state.allocations.map(a => ({
+          destination: a.destination,
+          token: a.token,
+          amount: BigInt(a.amount)
+        })),
+        sigs: []
+      };
+
+      // Sign the state with user's wallet
+      const packedState = getPackedState(channelIdHash, initialState);
+      this.log('Requesting wallet signature...');
+      const userSignature = await walletClient.signMessage({
+        account: this.userAddress,
+        message: { raw: packedState }
+      });
+
+      // Add both signatures
+      const signedState = {
+        ...initialState,
+        sigs: [userSignature, channelData.server_signature]
+      };
+
+      // Submit to blockchain
+      this.log('Creating channel on-chain (requires gas)...');
+      const txHash = await nitroliteService.createChannel(channel, signedState);
+      this.log(`Transaction submitted: ${txHash.slice(0, 10)}...`);
+
+      // Wait for confirmation
+      this.log('Waiting for confirmation...');
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        this.log('Channel created on-chain!');
+
+        // Store on-chain channel data
+        this.onChainChannels.set(channelData.channel_id, {
+          channel,
+          channelId: channelIdHash,
+          chainId,
+          chainConfig,
+          tokenAddress: chainConfig.token
+        });
+
+        // Now resize to move funds from ledger to on-chain custody (Step 3)
+        this.log('Step 3/4: Moving funds from ledger to on-chain custody...');
+        const { amount } = this.pendingWithdrawal;
+        this.log(`Moving ${(amount / 1_000_000).toFixed(2)} USDC to custody contract`);
+
+        // Use resize_amount (positive) to move from off-chain ledger to ON-CHAIN custody
+        // This is different from allocate_amount which only moves off-chain
+        const resizeMessage = await createResizeChannelMessage(
+          this.messageSigner,
+          {
+            channel_id: channelData.channel_id,
+            resize_amount: BigInt(amount),  // POSITIVE = ledger → on-chain custody
+            funds_destination: this.userAddress
+          }
+        );
+
+        // Update tracking
+        this.pendingWithdrawal.step = 'allocate_to_channel';
+
+        this.ws.send(resizeMessage);
+        // Flow continues in handleResizeChannelResponse
+
+      } else {
+        this.log('On-chain transaction failed', 'error');
+        this.pendingWithdrawal = null;
+      }
+
+    } catch (error) {
+      const errorMsg = error.cause?.message || error.shortMessage || error.message;
+      this.log(`On-chain submission failed: ${errorMsg}`, 'error');
+      console.error('On-chain error:', error);
+      this.pendingWithdrawal = null;
+    }
+  }
+
+  // Step 4 of withdrawal: Update on-chain state with the allocation
+  async submitResizeOnChain(channelData, resizeData, chainId, chainConfig) {
+    try {
+      // Ensure correct network
+      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+      if (parseInt(currentChainId, 16) !== chainId) {
+        this.log(`Switching to ${chainConfig.name}...`);
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: `0x${chainId.toString(16)}` }]
+        });
+      }
+
+      // Create clients
+      const walletClient = createWalletClient({
+        chain: chainConfig.chain,
+        transport: custom(window.ethereum),
+        account: this.userAddress
+      });
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+
+      // Initialize NitroliteService
+      const nitroliteService = new NitroliteService(
+        publicClient,
+        { custody: chainConfig.custody },
+        walletClient,
+        this.userAddress
+      );
+
+      // Build channel object
+      const channel = {
+        participants: channelData.channel.participants,
+        adjudicator: channelData.channel.adjudicator,
+        challenge: BigInt(channelData.channel.challenge),
+        nonce: BigInt(channelData.channel.nonce)
+      };
+
+      // Calculate channel ID
+      const channelIdHash = getChannelId(channel, chainId);
+
+      // Build state from resize response (this has the allocations!)
+      const stateWithAllocations = {
+        intent: resizeData.state.intent,
+        version: BigInt(resizeData.state.version),
+        data: resizeData.state.state_data || '0x',
+        allocations: resizeData.state.allocations.map(a => ({
+          destination: a.destination,
+          token: a.token,
+          amount: BigInt(a.amount)
+        })),
+        sigs: []
+      };
+
+      // Sign the state with user's wallet
+      const packedState = getPackedState(channelIdHash, stateWithAllocations);
+      this.log('Requesting wallet signature for resize...');
+      const userSignature = await walletClient.signMessage({
+        account: this.userAddress,
+        message: { raw: packedState }
+      });
+
+      // Add both signatures
+      const signedState = {
+        ...stateWithAllocations,
+        sigs: [userSignature, resizeData.server_signature]
+      };
+
+      // Submit resize to custody contract
+      this.log('Submitting resize on-chain (requires gas)...');
+      const txHash = await nitroliteService.resize(channelIdHash, signedState, []);
+      this.log(`Transaction submitted: ${txHash.slice(0, 10)}...`);
+
+      // Wait for confirmation
+      this.log('Waiting for confirmation...');
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        this.log('On-chain state updated with allocation!');
+
+        // Update stored channel data with deposited amount
+        const onChainData = this.onChainChannels.get(channelData.channel_id);
+        if (onChainData) {
+          onChainData.depositedAmount = this.pendingWithdrawal.amount;
+        }
+
+        // Now close the channel (Step 5)
+        this.log('Step 5/5: Closing channel to withdraw to wallet...');
+
+        const closeMessage = await createCloseChannelMessage(
+          this.messageSigner,
+          channelData.channel_id,
+          this.userAddress  // funds_destination
+        );
+
+        // Update tracking
+        this.pendingWithdrawal.step = 'close_channel';
+
+        this.ws.send(closeMessage);
+        // Flow continues in handleCloseChannelResponse
+
+      } else {
+        this.log('On-chain resize failed', 'error');
+        this.pendingWithdrawal = null;
+      }
+
+    } catch (error) {
+      const errorMsg = error.cause?.message || error.shortMessage || error.message;
+      this.log(`On-chain resize failed: ${errorMsg}`, 'error');
+      console.error('Resize on-chain error:', error);
+      this.pendingWithdrawal = null;
+    }
+  }
+
   handleGetChannelsResponse(data) {
     console.log('Get channels response:', data);
     this.channels = data?.channels || [];
@@ -1354,35 +1578,44 @@ class YellowPaymentApp {
   async handleResizeChannelResponse(data) {
     console.log('Resize channel response:', data);
 
-    // Check if this is for 4-step withdrawal flow (allocate → submit on-chain → close)
+    // Check if this is for 4-step withdrawal flow (after resize_amount, close channel)
+    // resize_amount moves funds to on-chain custody, so we can go directly to close
     if (this.pendingWithdrawal && this.pendingWithdrawal.step === 'allocate_to_channel') {
-      if (!data?.channel_id || !data?.state || !data?.server_signature) {
-        this.log('Allocate failed - missing state data', 'error');
-        console.error('Expected state in resize response:', data);
+      if (!data?.channel_id) {
+        this.log('Resize failed', 'error');
+        console.error('Resize response:', data);
         this.pendingWithdrawal = null;
         return;
       }
 
-      const { amount, channelId, channelData, chainId, chainConfig } = this.pendingWithdrawal;
+      const { channelId } = this.pendingWithdrawal;
 
-      // Log the new state with allocations
-      console.log('New state with allocations:', data.state);
-      const userAllocation = data.state.allocations?.find(a =>
+      // Log the resize success
+      const userAllocation = data.state?.allocations?.find(a =>
         a.destination.toLowerCase() === this.userAddress.toLowerCase()
       );
       if (userAllocation) {
-        this.log(`Channel now has ${(parseInt(userAllocation.amount) / 1_000_000).toFixed(2)} USDC allocated`);
+        this.log(`Funds moved to custody: ${(parseInt(userAllocation.amount) / 1_000_000).toFixed(2)} USDC`);
       }
 
-      this.log('Step 3/4: Submitting channel on-chain with allocated funds...');
+      // resize_amount handles moving to on-chain custody, now just close
+      this.log('Step 4/4: Closing channel to withdraw to wallet...');
 
       try {
-        // Step 3: Submit on-chain using the NEW state (with allocations) from resize response
-        await this.submitChannelOnChainWithState(channelData, data, chainId, chainConfig);
-        // Flow continues in submitChannelOnChainWithState
+        const closeMessage = await createCloseChannelMessage(
+          this.messageSigner,
+          channelId,
+          this.userAddress  // funds_destination
+        );
+
+        // Update tracking
+        this.pendingWithdrawal.step = 'close_channel';
+
+        this.ws.send(closeMessage);
+        // Flow continues in handleCloseChannelResponse
 
       } catch (error) {
-        this.log(`On-chain submission failed: ${error.message}`, 'error');
+        this.log(`Close failed: ${error.message}`, 'error');
         this.pendingWithdrawal = null;
       }
       return;
