@@ -238,48 +238,10 @@ class YellowPaymentApp {
     this.log('Fetching channels from chain...');
     this.onChainChannels.clear();
 
-    // Created event ABI
-    const createdEventAbi = [{
-      type: 'event',
-      name: 'Created',
-      inputs: [
-        { name: 'channelId', type: 'bytes32', indexed: true },
-        { name: 'wallet', type: 'address', indexed: true },
-        { name: 'channel', type: 'tuple', indexed: false, components: [
-          { name: 'participants', type: 'address[]' },
-          { name: 'adjudicator', type: 'address' },
-          { name: 'challenge', type: 'uint64' },
-          { name: 'nonce', type: 'uint64' }
-        ]},
-        { name: 'initial', type: 'tuple', indexed: false, components: [
-          { name: 'intent', type: 'uint8' },
-          { name: 'version', type: 'uint64' },
-          { name: 'data', type: 'bytes' },
-          { name: 'allocations', type: 'tuple[]', components: [
-            { name: 'destination', type: 'address' },
-            { name: 'token', type: 'address' },
-            { name: 'amount', type: 'uint256' }
-          ]},
-          { name: 'sigs', type: 'bytes[]' }
-        ]}
-      ]
-    }];
-
-    const getChannelBalancesAbi = [{
-      name: 'getChannelBalances',
-      type: 'function',
-      stateMutability: 'view',
-      inputs: [
-        { name: 'channelId', type: 'bytes32' },
-        { name: 'tokens', type: 'address[]' }
-      ],
-      outputs: [{ name: 'balances', type: 'uint256[]' }]
-    }];
-
-    // Query each chain
+    // Query each chain using SDK methods
     for (const [chainIdStr, chainConfig] of Object.entries(this.config.chains)) {
       const chainId = parseInt(chainIdStr);
-      if (!chainConfig.chain) continue; // Skip chains without viem config
+      if (!chainConfig.chain || !chainConfig.adjudicator) continue; // Skip chains without full config
 
       try {
         const publicClient = createPublicClient({
@@ -287,62 +249,51 @@ class YellowPaymentApp {
           transport: http(chainConfig.rpcUrl)
         });
 
-        // Get Created events where wallet is the user
-        const logs = await publicClient.getLogs({
-          address: chainConfig.custody,
-          event: createdEventAbi[0],
-          args: { wallet: this.userAddress },
-          fromBlock: 'earliest',
-          toBlock: 'latest'
-        });
+        // Create NitroliteService for this chain
+        const nitroliteService = new NitroliteService(
+          publicClient,
+          { custody: chainConfig.custody, adjudicator: chainConfig.adjudicator },
+          null, // walletClient not needed for reads
+          this.userAddress
+        );
 
-        this.log(`Found ${logs.length} channel(s) on ${chainConfig.name}`);
+        // Get open channels using SDK
+        const channelIds = await nitroliteService.getOpenChannels(this.userAddress);
+        this.log(`Found ${channelIds.length} channel(s) on ${chainConfig.name}`);
+        console.log(`SDK getOpenChannels (${chainConfig.name}):`, channelIds);
 
-        // For each channel, check current balance
-        for (const log of logs) {
-          const channelId = log.args.channelId;
-          const channel = log.args.channel;
-          const initial = log.args.initial;
+        // For each channel, get details and balance
+        for (const channelId of channelIds) {
+          try {
+            // Get channel data using SDK
+            const channelData = await nitroliteService.getChannelData(channelId);
+            console.log(`SDK getChannelData (${channelId}):`, channelData);
 
-          // Get current balance
-          const balances = await publicClient.readContract({
-            address: chainConfig.custody,
-            abi: getChannelBalancesAbi,
-            functionName: 'getChannelBalances',
-            args: [channelId, [chainConfig.token]]
-          });
+            // Get channel balance using SDK
+            const balance = await nitroliteService.getChannelBalance(channelId, chainConfig.token);
+            console.log(`SDK getChannelBalance (${channelId}):`, balance);
 
-          const balance = balances && balances[0] ? balances[0] : 0n;
+            // Only add channels with balance > 0
+            if (balance > 0n) {
+              // Find partner (the other participant)
+              const partnerAddress = channelData.channel.participants.find(
+                p => p.toLowerCase() !== this.userAddress.toLowerCase()
+              );
 
-          // Only add channels with balance > 0 (open channels)
-          if (balance > 0n) {
-            // Find partner (the other participant)
-            const partnerAddress = channel.participants.find(
-              p => p.toLowerCase() !== this.userAddress.toLowerCase()
-            );
-
-            this.onChainChannels.set(channelId, {
-              channelId,
-              chainId,
-              chainConfig,
-              channel: {
-                participants: channel.participants,
-                adjudicator: channel.adjudicator,
-                challenge: channel.challenge,
-                nonce: channel.nonce
-              },
-              depositedAmount: Number(balance),
-              tokenAddress: chainConfig.token,
-              partnerAddress,
-              currentState: {
-                version: 0n,
-                allocations: initial.allocations.map(a => ({
-                  destination: a.destination,
-                  token: a.token,
-                  amount: a.amount
-                }))
-              }
-            });
+              this.onChainChannels.set(channelId, {
+                channelId,
+                chainId,
+                chainConfig,
+                channel: channelData.channel,
+                status: channelData.status,
+                depositedAmount: Number(balance),
+                tokenAddress: chainConfig.token,
+                partnerAddress,
+                currentState: channelData.lastValidState
+              });
+            }
+          } catch (channelError) {
+            console.error(`Failed to fetch channel ${channelId}:`, channelError);
           }
         }
       } catch (error) {
@@ -639,6 +590,7 @@ class YellowPaymentApp {
       }
 
       // Display result
+      console.log(`SDK ${method} result:`, result);
       if (resultEl) {
         resultEl.textContent = JSON.stringify(result, null, 2);
         resultEl.style.color = '#4caf50';
