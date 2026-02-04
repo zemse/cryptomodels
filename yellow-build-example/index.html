@@ -497,15 +497,13 @@
         <button id="testnet-withdrawToWalletBtn" disabled style="background: #4caf50; color: white;">Withdraw to Wallet</button>
         <button id="testnet-checkCustodyBtn" disabled style="background: rgba(76,175,80,0.3); color: #4caf50; margin-top: 0.5rem;">Check Custody Balance</button>
 
-        <div class="collapsible-header" onclick="toggleCollapsible(this)" style="margin-top: 1rem;">
-          <span style="font-size: 0.85rem; color: #aaa;">Advanced: Channels</span>
-          <span class="collapse-icon" style="font-size: 0.7rem;">▼</span>
-        </div>
-        <div class="collapsible-content collapsed" style="display: none;">
+        <!-- Channels Section (Always Visible) -->
+        <h3 style="color: #ffd700; margin-top: 1.5rem; margin-bottom: 0.5rem; font-size: 1rem;">State Channels</h3>
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
           <button id="testnet-createChannelBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Create Channel</button>
           <button id="testnet-refreshChannelsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Refresh Channels</button>
-          <div id="testnet-channelsList" style="margin-top: 1rem; font-size: 0.85rem;"></div>
         </div>
+        <div id="testnet-channelsList" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
       </div>
 
       <!-- Activity Log -->
@@ -676,15 +674,13 @@
         <button id="mainnet-withdrawToWalletBtn" disabled style="background: #4caf50; color: white;">Withdraw to Wallet</button>
         <button id="mainnet-checkCustodyBtn" disabled style="background: rgba(76,175,80,0.3); color: #4caf50; margin-top: 0.5rem;">Check Custody Balance</button>
 
-        <div class="collapsible-header" onclick="toggleCollapsible(this)" style="margin-top: 1rem;">
-          <span style="font-size: 0.85rem; color: #aaa;">Advanced: Channels</span>
-          <span class="collapse-icon" style="font-size: 0.7rem;">▼</span>
-        </div>
-        <div class="collapsible-content collapsed" style="display: none;">
+        <!-- Channels Section (Always Visible) -->
+        <h3 style="color: #ffd700; margin-top: 1.5rem; margin-bottom: 0.5rem; font-size: 1rem;">State Channels</h3>
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
           <button id="mainnet-createChannelBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Create Channel</button>
           <button id="mainnet-refreshChannelsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Refresh Channels</button>
-          <div id="mainnet-channelsList" style="margin-top: 1rem; font-size: 0.85rem;"></div>
         </div>
+        <div id="mainnet-channelsList" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
       </div>
 
       <!-- Activity Log -->
