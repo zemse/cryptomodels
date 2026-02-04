@@ -534,18 +534,20 @@ class YellowPaymentApp {
         throw new Error(`Chain config not available for ${defaultChainId}`);
       }
 
-      // Create NitroliteService instance
+      // Create NitroliteService instance with correct parameter order:
+      // (publicClient, addresses, walletClient, account)
       const nitroliteService = new NitroliteService(
-        chainConfig.custody,
+        this.publicClient,
+        { custody: chainConfig.custody, adjudicator: chainConfig.adjudicator },
         this.walletClient,
-        this.publicClient
+        this.userAddress
       );
 
       let result;
 
       switch (method) {
         case 'getOpenChannels': {
-          result = await nitroliteService.getOpenChannels();
+          result = await nitroliteService.getOpenChannels(this.userAddress);
           break;
         }
 
