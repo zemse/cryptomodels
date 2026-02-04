@@ -26,8 +26,83 @@
 
     h1 {
       text-align: center;
-      margin-bottom: 2rem;
+      margin-bottom: 1rem;
       color: #ffd700;
+    }
+
+    /* Tab Navigation */
+    .tab-nav {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      justify-content: center;
+    }
+
+    .tab-btn {
+      padding: 0.75rem 2rem;
+      border: none;
+      border-radius: 8px 8px 0 0;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 1rem;
+    }
+
+    .tab-btn.testnet {
+      background: rgba(74, 144, 217, 0.3);
+      color: #4a90d9;
+      border: 2px solid #4a90d9;
+      border-bottom: none;
+    }
+
+    .tab-btn.testnet.active {
+      background: #4a90d9;
+      color: #fff;
+    }
+
+    .tab-btn.mainnet {
+      background: rgba(76, 175, 80, 0.3);
+      color: #4caf50;
+      border: 2px solid #4caf50;
+      border-bottom: none;
+    }
+
+    .tab-btn.mainnet.active {
+      background: #4caf50;
+      color: #fff;
+    }
+
+    .tab-btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* Mainnet Warning Banner */
+    .mainnet-warning {
+      background: rgba(255, 152, 0, 0.2);
+      border: 2px solid #ff9800;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      text-align: center;
+    }
+
+    .mainnet-warning strong {
+      color: #ff9800;
+      font-size: 1.1rem;
+    }
+
+    .mainnet-warning p {
+      color: #ffcc80;
+      font-size: 0.9rem;
+      margin-top: 0.5rem;
     }
 
     .card {
@@ -36,6 +111,16 @@
       padding: 1.5rem;
       margin-bottom: 1rem;
       backdrop-filter: blur(10px);
+    }
+
+    /* Testnet card styling */
+    .testnet-content .card {
+      border-left: 3px solid #4a90d9;
+    }
+
+    /* Mainnet card styling */
+    .mainnet-content .card {
+      border-left: 3px solid #4caf50;
     }
 
     .card h2 {
@@ -90,7 +175,7 @@
       transform: none;
     }
 
-    input {
+    input, select {
       width: 100%;
       padding: 0.75rem;
       border: 1px solid rgba(255, 255, 255, 0.2);
@@ -138,80 +223,478 @@
       word-break: break-all;
       color: #aaa;
     }
+
+    /* Environment badge in logs */
+    .env-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      margin-right: 4px;
+    }
+
+    .env-badge.testnet {
+      background: rgba(74, 144, 217, 0.3);
+      color: #4a90d9;
+    }
+
+    .env-badge.mainnet {
+      background: rgba(76, 175, 80, 0.3);
+      color: #4caf50;
+    }
+
+    /* App Sessions Section */
+    .session-card {
+      background: rgba(0, 0, 0, 0.2);
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 0.5rem;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .session-card .session-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+    }
+
+    .session-card .session-id {
+      font-family: monospace;
+      color: #888;
+      font-size: 0.8rem;
+    }
+
+    .session-card .allocation {
+      color: #4caf50;
+      font-weight: bold;
+    }
+
+    .session-card .counterparty {
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: #aaa;
+    }
+
+    .session-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .session-actions button {
+      flex: 1;
+      margin-top: 0;
+      padding: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    .btn-pay {
+      background: #2196f3;
+      color: white;
+    }
+
+    .btn-close {
+      background: #f44336;
+      color: white;
+    }
+
+    /* Deposit section styling */
+    .deposit-section {
+      background: rgba(76, 175, 80, 0.1);
+      border: 1px solid rgba(76, 175, 80, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-top: 1rem;
+    }
+
+    .deposit-section h3 {
+      color: #4caf50;
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+    }
+
+    /* Collapsible sections */
+    .collapsible-header {
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .collapsible-header:hover {
+      opacity: 0.8;
+    }
+
+    .collapsible-content {
+      margin-top: 1rem;
+    }
+
+    .collapse-icon {
+      transition: transform 0.2s;
+    }
+
+    .collapsed .collapse-icon {
+      transform: rotate(-90deg);
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Yellow Network Payment</h1>
 
-    <!-- Connection Status -->
-    <div class="card">
-      <h2>Connection Status</h2>
-      <div class="status">
-        <div class="status-dot" id="wsStatus"></div>
-        <span id="wsStatusText">Disconnected</span>
+    <!-- Tab Navigation -->
+    <div class="tab-nav">
+      <button class="tab-btn testnet" onclick="switchTab('testnet')">
+        🧪 Testnet
+      </button>
+      <button class="tab-btn mainnet active" onclick="switchTab('mainnet')">
+        🚀 Mainnet
+      </button>
+    </div>
+
+    <!-- ==================== TESTNET CONTENT ==================== -->
+    <div id="testnet-content" class="tab-content testnet-content">
+      <!-- Connection Status -->
+      <div class="card">
+        <h2>Connection Status</h2>
+        <div class="status">
+          <div class="status-dot" id="testnet-wsStatus"></div>
+          <span id="testnet-wsStatusText">Disconnected</span>
+        </div>
+        <div class="status">
+          <div class="status-dot" id="testnet-walletStatus"></div>
+          <span id="testnet-walletStatusText">Wallet not connected</span>
+        </div>
+        <p class="address" id="testnet-userAddress"></p>
+        <button id="testnet-connectBtn">Connect Wallet</button>
       </div>
-      <div class="status">
-        <div class="status-dot" id="walletStatus"></div>
-        <span id="walletStatusText">Wallet not connected</span>
+
+      <!-- Balance -->
+      <div class="card">
+        <h2>Your Balance (Off-Chain Ledger)</h2>
+        <p class="balance" id="testnet-balance">0.00 USDC</p>
+        <p style="font-size: 0.8rem; color: #888; text-align: center; margin-top: 0.5rem;">
+          This is your Yellow Network balance for instant payments.
+        </p>
       </div>
-      <p class="address" id="userAddress"></p>
-      <button id="connectBtn">Connect Wallet</button>
+
+      <!-- On-Chain Balance -->
+      <div class="card">
+        <h2>On-Chain Custody Balance</h2>
+        <div id="testnet-onChainBalanceContainer">
+          <p style="color: #888; font-size: 0.9rem;">Connect wallet to view on-chain balance.</p>
+        </div>
+        <button id="testnet-refreshOnChainBtn" disabled style="background: rgba(255,215,0,0.3); color: #ffd700; margin-top: 0.5rem;">
+          Refresh On-Chain Balance
+        </button>
+        <p style="font-size: 0.75rem; color: #666; margin-top: 0.5rem; text-align: center;">
+          Funds deposited directly on-chain. Clearnode may not track these - use withdraw below to recover.
+        </p>
+
+        <!-- Direct Deposit to Custody -->
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1);">
+          <h3 style="color: #ffd700; font-size: 0.9rem; margin-bottom: 0.5rem;">Direct Deposit to Custody</h3>
+          <p style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">
+            Deposit funds directly to the on-chain custody contract. Use this if your off-chain balance isn't updating.
+          </p>
+          <select id="testnet-depositCreateChainSelect">
+            <option value="11155111">Ethereum Sepolia</option>
+            <option value="84532">Base Sepolia</option>
+          </select>
+          <input type="number" id="testnet-depositCreateAmount" placeholder="Amount (USDC)" step="0.01" value="1">
+          <button id="testnet-depositAndCreateBtn" disabled style="background: #ff9800; color: white;">
+            Deposit to Custody
+          </button>
+        </div>
+
+        <!-- On-Chain Channel Creation -->
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1);">
+          <h3 style="color: #ffd700; font-size: 0.9rem; margin-bottom: 0.5rem;">Create On-Chain Channel</h3>
+          <p style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">
+            Create a state channel on-chain using your custody balance. Enter partner's private key to sign on their behalf.
+          </p>
+          <select id="testnet-onChainChannelChainSelect">
+            <option value="11155111">Ethereum Sepolia</option>
+            <option value="84532">Base Sepolia</option>
+          </select>
+          <input type="password" id="testnet-onChainChannelPartnerKey" placeholder="Partner private key (0x...)" style="font-family: monospace;">
+          <input type="number" id="testnet-onChainChannelAmount" placeholder="Amount (USDC)" step="0.01" value="1">
+          <button id="testnet-createOnChainChannelBtn" disabled style="background: #9c27b0; color: white;">
+            Create On-Chain Channel
+          </button>
+          <p style="font-size: 0.7rem; color: #f44336; margin-top: 0.5rem;">
+            ⚠️ Never use a private key with real funds for testing!
+          </p>
+        </div>
+      </div>
+
+      <!-- App Sessions -->
+      <div class="card">
+        <h2>Payment Sessions</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 1rem;">
+          Create payment sessions with other users. Funds are allocated from your off-chain balance.
+        </p>
+
+        <!-- Create New Session -->
+        <input type="text" id="testnet-sessionRecipient" placeholder="Recipient address (0x...)">
+        <input type="number" id="testnet-sessionAmount" placeholder="Amount to allocate (USDC)" step="0.01" value="1">
+        <button id="testnet-createAppSessionBtn" disabled>Create Payment Session</button>
+
+        <!-- Active Sessions List -->
+        <div id="testnet-appSessionsList" style="margin-top: 1rem; font-size: 0.85rem;">
+          <p style="color: #888;">No active sessions. Create one above.</p>
+        </div>
+
+        <button id="testnet-refreshAppSessionsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff; margin-top: 0.5rem;">
+          Refresh Sessions
+        </button>
+      </div>
+
+      <!-- Quick Transfer (Legacy) -->
+      <div class="card">
+        <div class="collapsible-header" onclick="toggleCollapsible(this)">
+          <h2>Quick Transfer</h2>
+          <span class="collapse-icon">▼</span>
+        </div>
+        <div class="collapsible-content">
+          <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem;">
+            Direct off-chain transfer to another user.
+          </p>
+          <input type="text" id="testnet-partnerAddress" placeholder="Recipient address (0x...)">
+          <input type="number" id="testnet-initialAmount" placeholder="Amount (USDC)" value="0.5" step="0.01">
+          <button id="testnet-createSessionBtn" disabled>Send Transfer</button>
+        </div>
+      </div>
+
+      <!-- Channel Management -->
+      <div class="card">
+        <h2>Withdraw to Wallet</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem;">
+          Withdraw your off-chain balance to your wallet on-chain.
+        </p>
+        <select id="testnet-chainSelect">
+          <option value="11155111">Ethereum Sepolia</option>
+          <option value="84532">Base Sepolia</option>
+          <option value="80002">Polygon Amoy</option>
+          <option value="59141">Linea Sepolia</option>
+        </select>
+        <input type="number" id="testnet-channelAmount" placeholder="Amount to withdraw (USDC)" step="0.01" value="1">
+        <button id="testnet-withdrawToWalletBtn" disabled style="background: #4caf50; color: white;">Withdraw to Wallet</button>
+        <button id="testnet-checkCustodyBtn" disabled style="background: rgba(76,175,80,0.3); color: #4caf50; margin-top: 0.5rem;">Check Custody Balance</button>
+
+        <div class="collapsible-header" onclick="toggleCollapsible(this)" style="margin-top: 1rem;">
+          <span style="font-size: 0.85rem; color: #aaa;">Advanced: Channels</span>
+          <span class="collapse-icon" style="font-size: 0.7rem;">▼</span>
+        </div>
+        <div class="collapsible-content collapsed" style="display: none;">
+          <button id="testnet-createChannelBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Create Channel</button>
+          <button id="testnet-refreshChannelsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Refresh Channels</button>
+          <div id="testnet-channelsList" style="margin-top: 1rem; font-size: 0.85rem;"></div>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="card">
+        <h2>Activity Log</h2>
+        <div class="log" id="testnet-activityLog">
+          <div class="log-entry">🧪 Testnet mode - Waiting for connection...</div>
+        </div>
+      </div>
     </div>
 
-    <!-- Balance -->
-    <div class="card">
-      <h2>Your Balance</h2>
-      <p class="balance" id="balance">0.00 USDC</p>
-    </div>
+    <!-- ==================== MAINNET CONTENT ==================== -->
+    <div id="mainnet-content" class="tab-content mainnet-content active">
+      <!-- Warning Banner -->
+      <div class="mainnet-warning">
+        <strong>⚠️ MAINNET - REAL FUNDS ⚠️</strong>
+        <p>You are using real USDC. All transactions are irreversible. Double-check all addresses and amounts.</p>
+      </div>
 
-    <!-- Create Session -->
-    <div class="card">
-      <h2>Create Payment Session</h2>
-      <input type="text" id="partnerAddress" placeholder="Partner address (0x...)">
-      <input type="number" id="initialAmount" placeholder="Your initial amount (USDC)" value="0.8" step="0.01">
-      <button id="createSessionBtn" disabled>Create Session</button>
-    </div>
+      <!-- Connection Status -->
+      <div class="card">
+        <h2>Connection Status</h2>
+        <div class="status">
+          <div class="status-dot" id="mainnet-wsStatus"></div>
+          <span id="mainnet-wsStatusText">Disconnected</span>
+        </div>
+        <div class="status">
+          <div class="status-dot" id="mainnet-walletStatus"></div>
+          <span id="mainnet-walletStatusText">Wallet not connected</span>
+        </div>
+        <p class="address" id="mainnet-userAddress"></p>
+        <button id="mainnet-connectBtn">Connect Wallet</button>
+      </div>
 
-    <!-- Send Payment -->
-    <div class="card">
-      <h2>Send Payment</h2>
-      <input type="text" id="recipientAddress" placeholder="Recipient address (0x...)">
-      <input type="number" id="paymentAmount" placeholder="Amount (USDC)" step="0.01">
-      <button id="sendPaymentBtn" disabled>Send Payment</button>
-    </div>
+      <!-- Balance -->
+      <div class="card">
+        <h2>Your Balance (Off-Chain Ledger)</h2>
+        <p class="balance" id="mainnet-balance">0.00 USDC</p>
+        <p style="font-size: 0.8rem; color: #888; text-align: center; margin-top: 0.5rem;">
+          This is your Yellow Network balance for instant payments.
+        </p>
 
-    <!-- Channel Management -->
-    <div class="card">
-      <h2>Channel Management (Withdraw On-Chain)</h2>
-      <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem;">
-        To withdraw on-chain: Create channel → Deposit to custody on-chain → Close channel
-      </p>
-      <p style="font-size: 0.75rem; color: #666; margin-bottom: 1rem;">
-        Custody (Sepolia): <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">0x019B65A265EB3363822f2752141b3dF16131b262</code>
-      </p>
-      <select id="chainSelect" style="width: 100%; padding: 0.75rem; border-radius: 8px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); margin-bottom: 0.5rem;">
-        <option value="11155111">Ethereum Sepolia</option>
-        <option value="84532">Base Sepolia</option>
-        <option value="80002">Polygon Amoy</option>
-        <option value="59141">Linea Sepolia</option>
-      </select>
-      <input type="number" id="channelAmount" placeholder="Amount to allocate (USDC)" step="0.01" value="1">
-      <button id="createChannelBtn" disabled>Create Channel</button>
-      <button id="withdrawToWalletBtn" disabled style="background: #4caf50; color: white;">Withdraw to Wallet</button>
-      <button id="refreshChannelsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Refresh Channels</button>
-      <button id="checkCustodyBtn" disabled style="background: rgba(76,175,80,0.3); color: #4caf50; margin-top: 0.5rem;">Check Custody Balance</button>
-      <div id="channelsList" style="margin-top: 1rem; font-size: 0.85rem;"></div>
-    </div>
+        <!-- Deposit Section -->
+        <div class="deposit-section">
+          <h3>Deposit USDC to Yellow Network</h3>
+          <p style="font-size: 0.8rem; color: #aaa; margin-bottom: 0.5rem;">
+            Deposit USDC from your wallet to use on Yellow Network.
+          </p>
+          <select id="mainnet-depositChainSelect">
+            <option value="8453">Base</option>
+            <option value="1">Ethereum</option>
+          </select>
+          <input type="number" id="mainnet-depositAmount" placeholder="Amount to deposit (USDC)" step="0.001" value="0.001">
+          <button id="mainnet-depositBtn" disabled style="background: #4caf50; color: white;">Deposit USDC</button>
+        </div>
+      </div>
 
-    <!-- Activity Log -->
-    <div class="card">
-      <h2>Activity Log</h2>
-      <div class="log" id="activityLog">
-        <div class="log-entry">Waiting for connection...</div>
+      <!-- On-Chain Balance -->
+      <div class="card">
+        <h2>On-Chain Custody Balance</h2>
+        <div id="mainnet-onChainBalanceContainer">
+          <p style="color: #888; font-size: 0.9rem;">Connect wallet to view on-chain balance.</p>
+        </div>
+        <button id="mainnet-refreshOnChainBtn" disabled style="background: rgba(255,215,0,0.3); color: #ffd700; margin-top: 0.5rem;">
+          Refresh On-Chain Balance
+        </button>
+
+        <!-- Direct Deposit to Custody -->
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1);">
+          <h3 style="color: #ffd700; font-size: 0.9rem; margin-bottom: 0.5rem;">Direct Deposit to Custody</h3>
+          <p style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">
+            Deposit funds directly to the on-chain custody contract. Use this if your off-chain balance isn't updating.
+          </p>
+          <select id="mainnet-depositCreateChainSelect">
+            <option value="8453">Base</option>
+            <option value="1">Ethereum</option>
+          </select>
+          <input type="number" id="mainnet-depositCreateAmount" placeholder="Amount (USDC)" step="0.001" value="0.001">
+          <button id="mainnet-depositAndCreateBtn" disabled style="background: #ff9800; color: white;">
+            Deposit to Custody
+          </button>
+        </div>
+
+        <!-- On-Chain Channel Creation -->
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1);">
+          <h3 style="color: #ffd700; font-size: 0.9rem; margin-bottom: 0.5rem;">Create On-Chain Channel</h3>
+          <p style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">
+            Create a state channel on-chain using your custody balance. Enter partner's private key to sign on their behalf.
+          </p>
+          <select id="mainnet-onChainChannelChainSelect">
+            <option value="8453">Base</option>
+            <option value="1">Ethereum</option>
+          </select>
+          <input type="password" id="mainnet-onChainChannelPartnerKey" placeholder="Partner private key" style="font-family: monospace;">
+          <input type="number" id="mainnet-onChainChannelAmount" placeholder="Amount (USDC)" step="0.001" value="0.001">
+          <button id="mainnet-createOnChainChannelBtn" disabled style="background: #9c27b0; color: white;">
+            Create On-Chain Channel
+          </button>
+          <p style="font-size: 0.7rem; color: #f44336; margin-top: 0.5rem;">
+            ⚠️ Never use a private key with real funds for testing!
+          </p>
+        </div>
+      </div>
+
+      <!-- App Sessions -->
+      <div class="card">
+        <h2>Payment Sessions</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 1rem;">
+          Create payment sessions with other users. Funds are allocated from your off-chain balance.
+        </p>
+
+        <!-- Create New Session -->
+        <input type="text" id="mainnet-sessionRecipient" placeholder="Recipient address (0x...)">
+        <input type="number" id="mainnet-sessionAmount" placeholder="Amount to allocate (USDC)" step="0.001" value="0.001">
+        <button id="mainnet-createAppSessionBtn" disabled>Create Payment Session</button>
+
+        <!-- Active Sessions List -->
+        <div id="mainnet-appSessionsList" style="margin-top: 1rem; font-size: 0.85rem;">
+          <p style="color: #888;">No active sessions. Create one above.</p>
+        </div>
+
+        <button id="mainnet-refreshAppSessionsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff; margin-top: 0.5rem;">
+          Refresh Sessions
+        </button>
+      </div>
+
+      <!-- Quick Transfer (Legacy) -->
+      <div class="card">
+        <div class="collapsible-header" onclick="toggleCollapsible(this)">
+          <h2>Quick Transfer</h2>
+          <span class="collapse-icon">▼</span>
+        </div>
+        <div class="collapsible-content">
+          <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem;">
+            Direct off-chain transfer to another user.
+          </p>
+          <input type="text" id="mainnet-partnerAddress" placeholder="Recipient address (0x...)">
+          <input type="number" id="mainnet-initialAmount" placeholder="Amount (USDC)" value="0.001" step="0.001">
+          <button id="mainnet-createSessionBtn" disabled>Send Transfer</button>
+        </div>
+      </div>
+
+      <!-- Withdraw to Wallet -->
+      <div class="card">
+        <h2>Withdraw to Wallet</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem;">
+          Withdraw your off-chain balance to your wallet on-chain.
+        </p>
+        <select id="mainnet-chainSelect">
+          <option value="8453">Base</option>
+          <option value="1">Ethereum</option>
+        </select>
+        <input type="number" id="mainnet-channelAmount" placeholder="Amount to withdraw (USDC)" step="0.001" value="0.001">
+        <button id="mainnet-withdrawToWalletBtn" disabled style="background: #4caf50; color: white;">Withdraw to Wallet</button>
+        <button id="mainnet-checkCustodyBtn" disabled style="background: rgba(76,175,80,0.3); color: #4caf50; margin-top: 0.5rem;">Check Custody Balance</button>
+
+        <div class="collapsible-header" onclick="toggleCollapsible(this)" style="margin-top: 1rem;">
+          <span style="font-size: 0.85rem; color: #aaa;">Advanced: Channels</span>
+          <span class="collapse-icon" style="font-size: 0.7rem;">▼</span>
+        </div>
+        <div class="collapsible-content collapsed" style="display: none;">
+          <button id="mainnet-createChannelBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Create Channel</button>
+          <button id="mainnet-refreshChannelsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Refresh Channels</button>
+          <div id="mainnet-channelsList" style="margin-top: 1rem; font-size: 0.85rem;"></div>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="card">
+        <h2>Activity Log</h2>
+        <div class="log" id="mainnet-activityLog">
+          <div class="log-entry">🚀 Mainnet mode - Waiting for connection...</div>
+        </div>
       </div>
     </div>
   </div>
+
+  <script>
+    // Tab switching
+    function switchTab(tab) {
+      // Update tab buttons
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelector(`.tab-btn.${tab}`).classList.add('active');
+
+      // Update tab content
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+      document.getElementById(`${tab}-content`).classList.add('active');
+    }
+
+    // Collapsible sections
+    function toggleCollapsible(header) {
+      const content = header.nextElementSibling;
+      const icon = header.querySelector('.collapse-icon');
+
+      if (content.style.display === 'none') {
+        content.style.display = 'block';
+        header.classList.remove('collapsed');
+      } else {
+        content.style.display = 'none';
+        header.classList.add('collapsed');
+      }
+    }
+  </script>
 
   <script type="module" src="/src/app.js"></script>
 </body>
