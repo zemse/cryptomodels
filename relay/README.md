@@ -81,6 +81,7 @@ Since ECDH is symmetric, both get the same hash. They connect to `/socket/:dhHas
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
+| `/` | GET | No | Health check |
 | `/otp` | GET | No | Get time-based challenge |
 | `/inbox` | POST | Yes | Create inbox |
 | `/inbox/:address` | GET | No | Get inbox pubkey |
@@ -104,6 +105,7 @@ X-Message: relay-auth-...  # The OTP message that was signed
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `4000` | Server port |
+| `DATABASE_PATH` | `relay.db` | SQLite database file path |
 
 ## Project Structure
 
@@ -124,10 +126,11 @@ relay/
 │   │   └── verify.ts      # Signature verification
 │   └── types.ts           # TypeScript interfaces
 ├── tests/
-│   ├── auth.test.ts
-│   ├── inbox.test.ts
-│   ├── websocket.test.ts
-│   └── e2e.test.ts
+│   ├── auth.test.ts       # OTP and signature verification
+│   ├── inbox.test.ts      # Database CRUD operations
+│   ├── websocket.test.ts  # WebSocket room management
+│   ├── routes.test.ts     # HTTP API error handling
+│   └── e2e.test.ts        # Full flow integration
 └── docs/
     └── API.md
 ```
