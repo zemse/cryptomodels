@@ -596,37 +596,94 @@ if (stored) {
 
 ---
 
+## Bug 12: Race condition between create_channel and resize_channel (SERVER-SIDE)
+
+**Symptom:**
+```
+[16:45:21] Channel created off-chain: 0x6a410421...
+[16:45:21] Step 2/3: Moving funds to on-chain custody...
+[16:45:21] Error: channel 0x6a410421c49bc68e9c760b3e5398b9ac586fb45937a59997cb26180006e58e93 not found
+```
+
+**Cause:**
+The Yellow Network server returns a `create_channel` response immediately after creating the channel, but hasn't finished persisting it to the database yet. When the SDK sends a `resize_channel` request milliseconds later, the server's database query fails with "channel not found".
+
+**Timeline:**
+- `create_channel` response timestamp: `1770203721027`
+- `resize_channel` request sent: `1770203728841` (sent)
+- Server response timestamp: `1770203721339` (indicates server hadn't finished processing)
+
+**Solution:**
+Add a delay between channel creation and resize to allow the server to persist the channel:
+
+```javascript
+// In handleCreateChannelResponse() after getting the response
+if (this.pendingWithdrawal && this.pendingWithdrawal.step === 'create_channel') {
+  const { amount, chainConfig } = this.pendingWithdrawal;
+  const channelId = data.channel_id;
+
+  this.log('Step 2/3: Moving funds to on-chain custody...');
+
+  // Add small delay to avoid race condition with server persistence
+  await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+
+  try {
+    const resizeMessage = await createResizeChannelMessage(...);
+    this.ws.send(resizeMessage);
+  } catch (error) {
+    // ...
+  }
+}
+```
+
+**Status:** Identified during testing. Requires code fix.
+
+**Server-side issue:** The Yellow Network clearnode should either:
+1. Only return `create_channel` response after the channel is fully persisted
+2. Add a channel creation queue/buffer
+3. Handle "channel not found" by retrying after a short delay
+
+---
+
 ## On-Chain Channel Flow Summary
 
 Based on testing and the [GitHub discussion](https://github.com/layer-3/docs/discussions/20), here's the complete flow for on-chain withdrawals:
 
-### Getting Test Tokens On-Chain - SIMPLIFIED FLOW
+### Getting Test Tokens On-Chain - 4-STEP FLOW
 
-**The correct simple 3-step flow:**
+**The correct 4-step flow ensures non-zero allocations on-chain:**
 
 1. **Faucet tokens go to unified OFF-CHAIN balance** - NOT directly to your wallet
-2. **To get tokens ON-CHAIN (Simple 3-step):**
-   - **Step 1**: Create channel via WebSocket (off-chain only)
-   - **Step 2**: Resize with **positive** `resize_amount` (moves from ledger to on-chain custody)
-   - **Step 3**: Close channel on-chain (withdraws to wallet)
+2. **To get tokens ON-CHAIN (4-step flow):**
+   - **Step 1**: Create channel via WebSocket (off-chain only) → gets channel config
+   - **Step 2**: Resize with `allocate_amount` (off-chain) → moves funds from ledger to channel, returns NEW state with allocations
+   - **Step 3**: Submit on-chain with the allocated state → creates channel on custody with funds
+   - **Step 4**: Close channel on-chain → withdraws to wallet
 
-### Channel Lifecycle - CORRECTED
+### Channel Lifecycle - CORRECTED (4-STEP)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     OFF-CHAIN (WebSocket)                        │
 ├─────────────────────────────────────────────────────────────────┤
-│ 1. create_channel → Returns channel + state + server_signature  │
-│ 2. resize_channel (resize_amount: +amount) → Moves to custody   │
-│ 3. close_channel  → Returns final state + server_signature      │
+│ 1. create_channel → Returns channel + state (0 allocations)     │
+│ 2. resize_channel (allocate_amount: +amount)                    │
+│    → Moves funds ledger → channel (off-chain)                   │
+│    → Returns NEW state with non-zero allocations + signature    │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     ON-CHAIN (Blockchain)                        │
 ├─────────────────────────────────────────────────────────────────┤
-│ NitroliteService.close(channelId, finalState, [])               │
-│    - User signs final state with main wallet                    │
+│ 3. NitroliteService.createChannel(channel, stateWithAllocations)│
+│    - User signs the NEW state (with allocations) from step 2    │
+│    - Submit create transaction with funded state                │
+│    - Funds locked in custody contract                           │
+├─────────────────────────────────────────────────────────────────┤
+│ 4. close_channel (off-chain) → get final state                  │
+│    → NitroliteService.close(channelId, finalState, [])          │
+│    - User signs final state                                      │
 │    - Submit close transaction                                    │
 │    - Tokens sent to funds_destination address                   │
 └─────────────────────────────────────────────────────────────────┘
@@ -636,44 +693,51 @@ Based on testing and the [GitHub discussion](https://github.com/layer-3/docs/dis
 
 | Parameter | Direction | Use Case |
 |-----------|-----------|----------|
-| `allocate_amount` | Ledger → Channel (off-chain) | Fund existing channel |
-| `resize_amount` (positive) | Ledger → On-chain custody | **Withdrawal flow** |
+| `allocate_amount` | Ledger → Channel (off-chain) | **Step 2 of withdrawal - get allocated state** |
+| `resize_amount` (positive) | Ledger → On-chain custody | Direct custody deposit (not recommended for withdrawal) |
 | `resize_amount` (negative) | Channel → Custody | Reduce channel size |
+
+**KEY INSIGHT:** Using `allocate_amount` gives you a NEW state with non-zero allocations. You then submit THIS state on-chain to lock the funds. The previous 3-step approach with `resize_amount` was creating channels with 0 allocations because we submitted the original state (before resize).
 
 ### Key Points
 
-- **You do NOT need to submit channel creation on-chain first**
-- **Use `resize_amount` (positive) to move from ledger to custody**
+- **Use `allocate_amount` to get a state with allocations**
+- **Submit on-chain with the NEW state from resize response (not the original state from create_channel)**
 - **Custody Contract (Sepolia):** `0x019B65A265EB3363822f2752141b3dF16131b262`
 - **Test Token (ytest.usd):** `0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb`
 - **Signatures order:** Always `[userSignature, serverSignature]`
 - **State signing:** Use `getPackedState(channelId, state)` then sign with `walletClient.signMessage({ message: { raw: packedState } })`
 
-### What Was Wrong
+### What Was Wrong (Twice!)
 
-The initial implementation tried a complex 5-step flow:
+**First attempt - complex 5-step flow:**
 ```
 create → submit on-chain → allocate → negative resize → submit resize → withdraw
 ```
 
-This was caused by misunderstanding the difference between `allocate_amount` and `resize_amount`:
-- `allocate_amount` moves funds from ledger to channel (OFF-CHAIN only)
-- `resize_amount` (positive) moves funds from ledger to ON-CHAIN custody
+**Second attempt - 3-step flow (still broken):**
+```
+create → resize_amount (+amount) → close on-chain
+```
+This was still creating channels with 0 allocations because `resize_amount` affects custody directly but we were submitting the original state from `create_channel` which had 0 allocations.
 
-The correct 3-step flow is:
+**The correct 4-step flow:**
 ```
-create → resize (+amount) → close on-chain
+create → allocate_amount → submit on-chain (with NEW state) → close on-chain
 ```
+
+The key insight: `allocate_amount` returns a NEW state with the allocations. We must submit THIS state on-chain, not the original state from create_channel.
 
 ### Implementation Status
 
-✅ **FIXED** - The simplified 3-step withdrawal flow has been implemented in `src/app.js`:
+✅ **FIXED** - The 4-step withdrawal flow has been implemented in `src/app.js`:
 
-1. `withdrawToWallet()` - Initiates withdrawal with proper balance checks
-2. `handleCreateChannelResponse()` - Triggers resize with positive amount
-3. `handleResizeChannelResponse()` - Triggers close channel
-4. `handleCloseChannelResponse()` - Submits close transaction on-chain
-5. `submitCloseOnChainSimple()` - New method to handle final on-chain close
+1. `withdrawToWallet()` - Initiates withdrawal, creates off-chain channel
+2. `handleCreateChannelResponse()` - Triggers resize with `allocate_amount` (not `resize_amount`)
+3. `handleResizeChannelResponse()` - Captures the NEW state with allocations, calls `submitChannelOnChainWithState()`
+4. `submitChannelOnChainWithState()` - Submits channel on-chain with the allocated state
+5. `handleCloseChannelResponse()` - Submits close transaction on-chain
+6. `submitCloseOnChainSimple()` - Handles final on-chain close
 
 The old complex methods have been commented out with deprecation notes:
 - `allocateFundsToChannel()`
@@ -688,16 +752,21 @@ To test the fixed withdrawal flow:
 1. Connect wallet and authenticate
 2. Get test tokens from faucet (off-chain balance)
 3. Click "Withdraw to Wallet"
-4. Approve MetaMask signature for final state (once)
-5. Approve MetaMask transaction for on-chain close (once)
-6. Check Sepolia wallet for ytest.usd tokens
+4. Approve MetaMask signature for create channel (step 3)
+5. Approve MetaMask transaction for on-chain create (step 3)
+6. Approve MetaMask signature for close (step 4)
+7. Approve MetaMask transaction for on-chain close (step 4)
+8. Check Sepolia wallet for ytest.usd tokens
 
 Expected logs:
 ```
 Starting withdrawal: 1.0 USDC to Ethereum Sepolia
-Step 1/3: Creating off-chain channel...
-Step 2/3: Moving funds to on-chain custody...
-Step 3/3: Closing channel to withdraw to wallet...
-Submitting close transaction on-chain...
+Step 1/4: Creating off-chain channel...
+Channel created off-chain: 0x123...
+Step 2/4: Allocating funds to channel (off-chain)...
+Channel now has 1.00 USDC allocated
+Step 3/4: Submitting channel on-chain with allocated funds...
+Channel created on-chain with funds!
+Step 4/4: Closing channel to withdraw to wallet...
 ✓ Withdrawal complete!
 ```
