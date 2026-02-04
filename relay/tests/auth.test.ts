@@ -108,4 +108,53 @@ describe("Signature Verification", () => {
     expect(isValidPubkey("0x1234")).toBe(false);
     expect(isValidPubkey("invalid")).toBe(false);
   });
+
+  test("recoverAddress handles signature without 0x prefix", () => {
+    const message = "test no prefix";
+    const signature = signMessage(message, privateKey);
+    const sigWithoutPrefix = signature.slice(2); // Remove 0x
+
+    const recovered = recoverAddress(message, sigWithoutPrefix);
+    expect(recovered?.toLowerCase()).toBe(expectedAddress.toLowerCase());
+  });
+
+  test("pubkeyToAddress handles pubkey without 0x prefix", () => {
+    const pubkeyHexNoPrefix = bytesToHex(publicKey);
+    const address = pubkeyToAddress(pubkeyHexNoPrefix);
+    expect(address?.toLowerCase()).toBe(expectedAddress.toLowerCase());
+  });
+
+  test("isValidPubkey handles pubkey without 0x prefix", () => {
+    const pubkeyHexNoPrefix = bytesToHex(publicKey);
+    expect(isValidPubkey(pubkeyHexNoPrefix)).toBe(true);
+  });
+
+  test("recoverAddress returns null for wrong length signature", () => {
+    // Too short
+    expect(recoverAddress("test", "0x" + "ab".repeat(64))).toBeNull();
+    // Too long
+    expect(recoverAddress("test", "0x" + "ab".repeat(66))).toBeNull();
+  });
+
+  test("recoverAddress returns null for invalid recovery value", () => {
+    const message = "test invalid v";
+    const signature = signMessage(message, privateKey);
+    // Corrupt the v value to something invalid (not 27/28 or 0/1)
+    const corruptedSig = signature.slice(0, -2) + "ff";
+    expect(recoverAddress(message, corruptedSig)).toBeNull();
+  });
+
+  test("pubkeyToAddress returns null for wrong length bytes", () => {
+    // Not 33 or 65 bytes
+    expect(pubkeyToAddress("0x" + "ab".repeat(32))).toBeNull();
+    expect(pubkeyToAddress("0x" + "ab".repeat(34))).toBeNull();
+  });
+
+  test("isValidPubkey returns false for empty string", () => {
+    expect(isValidPubkey("")).toBe(false);
+  });
+
+  test("isValidPubkey returns false for odd-length hex", () => {
+    expect(isValidPubkey("0xabc")).toBe(false);
+  });
 });

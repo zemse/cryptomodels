@@ -5,7 +5,7 @@ import { keccak_256 } from "@noble/hashes/sha3";
 const keccak256 = (data: Uint8Array) => keccak_256(data);
 import { bytesToHex } from "@noble/hashes/utils";
 
-const BASE_URL = "http://localhost:3002";
+const BASE_URL = "http://localhost:4002";
 let serverProcess: any;
 
 // Enable sync API for noble-secp256k1
@@ -22,13 +22,13 @@ beforeAll(async () => {
   // Start test server
   serverProcess = Bun.spawn(["bun", "run", "src/index.ts"], {
     cwd: import.meta.dir.replace("/tests", ""),
-    env: { ...process.env, PORT: "3002" },
+    env: { ...process.env, PORT: "4002", DATABASE_PATH: "test-e2e.db" },
     stdout: "ignore",
     stderr: "ignore",
   });
 
   // Wait for server to start
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await new Promise((resolve) => setTimeout(resolve, 1500));
 });
 
 afterAll(() => {
@@ -38,7 +38,7 @@ afterAll(() => {
   // Clean up test database
   try {
     const fs = require("fs");
-    fs.unlinkSync("relay.db");
+    fs.unlinkSync("test-e2e.db");
   } catch {
     // Ignore if file doesn't exist
   }
@@ -165,7 +165,7 @@ describe("E2E Flow", () => {
     const shared = secp256k1.getSharedSecret(privateKeyA, publicKeyB);
     const dhHash = bytesToHex(keccak256(shared));
 
-    const wsUrl = `ws://localhost:3002/socket/${dhHash}`;
+    const wsUrl = `ws://localhost:4002/socket/${dhHash}`;
 
     // Connect both parties
     const ws1 = new WebSocket(wsUrl);

@@ -4,7 +4,8 @@ let db: Database | null = null;
 
 export function getDb(): Database {
   if (!db) {
-    db = new Database("relay.db");
+    const dbPath = process.env.DATABASE_PATH ?? "relay.db";
+    db = new Database(dbPath);
     initSchema(db);
   }
   return db;
