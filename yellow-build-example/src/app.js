@@ -865,22 +865,11 @@ class YellowPaymentApp {
     try {
       this.log(`Starting deposit: ${amount} USDC on ${chainConfig.name}`);
 
-      // Switch network if needed
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (parseInt(currentChainId, 16) !== chainId) {
-        this.log(`Switching to ${chainConfig.name}...`);
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: `0x${chainId.toString(16)}` }]
-        });
-      }
+      // Switch network if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
 
-      // Create clients for this chain
-      const walletClient = createWalletClient({
-        chain: chainConfig.chain,
-        transport: custom(window.ethereum),
-        account: this.userAddress
-      });
+      // Create clients for this chain (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
         transport: http()
@@ -1059,21 +1048,11 @@ class YellowPaymentApp {
     try {
       this.log(`Withdrawing ${amountFormatted} USDC from ${chainConfig.name} custody...`);
 
-      // Switch chain if needed
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (parseInt(currentChainId, 16) !== chainId) {
-        this.log(`Switching to ${chainConfig.name}...`);
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: `0x${chainId.toString(16)}` }]
-        });
-      }
+      // Switch chain if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
 
-      const walletClient = createWalletClient({
-        chain: chainConfig.chain,
-        transport: custom(window.ethereum),
-        account: this.userAddress
-      });
+      // Create clients (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
         transport: http()
@@ -1132,21 +1111,11 @@ class YellowPaymentApp {
     try {
       this.log(`Depositing ${amount} USDC to custody on ${chainConfig.name}...`);
 
-      // Switch chain if needed
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (parseInt(currentChainId, 16) !== chainId) {
-        this.log(`Switching to ${chainConfig.name}...`);
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: `0x${chainId.toString(16)}` }]
-        });
-      }
+      // Switch chain if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
 
-      const walletClient = createWalletClient({
-        chain: chainConfig.chain,
-        transport: custom(window.ethereum),
-        account: this.userAddress
-      });
+      // Create clients (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
         transport: http()
@@ -1281,15 +1250,8 @@ class YellowPaymentApp {
     try {
       this.log(`Creating on-chain channel with partner ${partnerAddress.slice(0, 6)}...${partnerAddress.slice(-4)} on ${chainConfig.name}`);
 
-      // Switch chain if needed
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (parseInt(currentChainId, 16) !== chainId) {
-        this.log(`Switching to ${chainConfig.name}...`);
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: `0x${chainId.toString(16)}` }]
-        });
-      }
+      // Switch chain if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
 
       const checksummedUser = getAddress(this.userAddress);
       const checksummedPartner = getAddress(partnerAddress);
@@ -1329,21 +1291,27 @@ class YellowPaymentApp {
       // Get packed state for signing
       const packedState = getPackedState(channelIdHash, initialState);
 
-      // Step 1: Get user signature via MetaMask
-      this.log('Step 1/3: Requesting your signature via MetaMask...');
+      // Step 1: Get user signature
+      this.log('Step 1/3: Requesting your signature...');
 
-      const walletClient = createWalletClient({
-        chain: chainConfig.chain,
-        transport: custom(window.ethereum),
-        account: checksummedUser
-      });
+      // Create wallet client (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
 
-      const userSignature = await walletClient.signMessage({
-        account: checksummedUser,
-        message: { raw: packedState }
-      });
-
-      this.log('Your signature obtained!');
+      let userSignature;
+      if (this.walletConnectionType === 'privatekey' && this.privateKeyAccount) {
+        // Sign directly with private key
+        userSignature = await this.privateKeyAccount.signMessage({
+          message: { raw: packedState }
+        });
+        this.log('Your signature obtained (private key)!');
+      } else {
+        // Sign via wallet (MetaMask or WalletConnect)
+        userSignature = await walletClient.signMessage({
+          account: checksummedUser,
+          message: { raw: packedState }
+        });
+        this.log('Your signature obtained!');
+      }
 
       // Step 2: Sign with partner's private key programmatically
       this.log('Step 2/3: Signing with partner private key...');
@@ -2124,13 +2092,8 @@ class YellowPaymentApp {
 
       this.log(`Checking custody balance on ${chainConfig.name}...`);
 
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      const currentChainIdDecimal = parseInt(currentChainId, 16);
-      if (currentChainIdDecimal !== chainId) {
-        this.log(`Please switch to ${chainConfig.name} in your wallet first`, 'error');
-        return;
-      }
-
+      // For private key connections, we don't need to check chain
+      // For wallet connections, we just use the public client
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
         transport: http()
@@ -2186,11 +2149,11 @@ class YellowPaymentApp {
       const chainConfig = this.config.chains[chainId];
       this.log(`Withdrawing ${amountFormatted} USDC from custody...`);
 
-      const walletClient = createWalletClient({
-        chain: chainConfig.chain,
-        transport: custom(window.ethereum),
-        account: this.userAddress
-      });
+      // Switch chain if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
+
+      // Create clients (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
         transport: http()
@@ -2306,34 +2269,20 @@ class YellowPaymentApp {
         return;
       }
 
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      const currentChainIdDecimal = parseInt(currentChainId, 16);
-      if (currentChainIdDecimal !== chainId) {
-        this.log(`Switching to ${chainConfig.name}...`);
-        try {
-          await window.ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: `0x${chainId.toString(16)}` }]
-          });
-          this.walletClient = createWalletClient({
-            chain: chainConfig.chain,
-            transport: custom(window.ethereum),
-            account: this.userAddress
-          });
-          this.publicClient = createPublicClient({
-            chain: chainConfig.chain,
-            transport: http()
-          });
-        } catch (switchError) {
-          this.log(`Please switch to ${chainConfig.name} in your wallet`, 'error');
-          return;
-        }
-      }
+      // Switch chain if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
+
+      // Create clients (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
 
       const nitroliteService = new NitroliteService(
-        this.publicClient,
+        publicClient,
         { custody: chainConfig.custody },
-        this.walletClient,
+        walletClient,
         this.userAddress
       );
 
@@ -2425,20 +2374,11 @@ class YellowPaymentApp {
 
   async submitChannelOnChainForWithdrawal(channelData, chainId, chainConfig) {
     try {
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (parseInt(currentChainId, 16) !== chainId) {
-        this.log(`Switching to ${chainConfig.name}...`);
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: `0x${chainId.toString(16)}` }]
-        });
-      }
+      // Switch chain if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
 
-      const walletClient = createWalletClient({
-        chain: chainConfig.chain,
-        transport: custom(window.ethereum),
-        account: this.userAddress
-      });
+      // Create clients (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
         transport: http()
@@ -2686,35 +2626,20 @@ class YellowPaymentApp {
 
       const { channel, channelId: channelIdHash, chainId, chainConfig } = onChainData;
 
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      const currentChainIdDecimal = parseInt(currentChainId, 16);
+      // Switch chain if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
 
-      if (currentChainIdDecimal !== chainId) {
-        this.log(`Switching to ${chainConfig.name}...`);
-        try {
-          await window.ethereum.request({
-            method: 'wallet_switchEthereumChain',
-            params: [{ chainId: `0x${chainId.toString(16)}` }]
-          });
-          this.walletClient = createWalletClient({
-            chain: chainConfig.chain,
-            transport: custom(window.ethereum),
-            account: this.userAddress
-          });
-          this.publicClient = createPublicClient({
-            chain: chainConfig.chain,
-            transport: http()
-          });
-        } catch (switchError) {
-          this.log(`Please switch to ${chainConfig.name} in your wallet`, 'error');
-          return;
-        }
-      }
+      // Create clients (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
 
       const nitroliteService = new NitroliteService(
-        this.publicClient,
+        publicClient,
         { custody: chainConfig.custody },
-        this.walletClient,
+        walletClient,
         this.userAddress
       );
 
@@ -2799,20 +2724,11 @@ class YellowPaymentApp {
 
   async submitCloseOnChainSimple(channelData, closeData, chainId, chainConfig) {
     try {
-      const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-      if (parseInt(currentChainId, 16) !== chainId) {
-        this.log(`Switching to ${chainConfig.name}...`);
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: `0x${chainId.toString(16)}` }]
-        });
-      }
+      // Switch chain if needed (uses appropriate provider for wallet type)
+      await this.ensureChain(chainId, chainConfig);
 
-      const walletClient = createWalletClient({
-        chain: chainConfig.chain,
-        transport: custom(window.ethereum),
-        account: this.userAddress
-      });
+      // Create clients (uses appropriate signer for wallet type)
+      const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
         transport: http()
