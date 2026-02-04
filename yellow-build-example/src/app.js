@@ -379,7 +379,7 @@ class YellowPaymentApp {
       // Create public client to query on-chain state
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       // Get channel balance for USDC token first - this is simpler and tells us if channel exists
@@ -973,7 +973,7 @@ class YellowPaymentApp {
     if (chainConfig?.chain) {
       this.publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
       this.walletClient = createWalletClient({
         chain: chainConfig.chain,
@@ -1014,12 +1014,12 @@ class YellowPaymentApp {
       if (chainConfig?.chain) {
         this.publicClient = createPublicClient({
           chain: chainConfig.chain,
-          transport: http()
+          transport: http(chainConfig.rpcUrl)
         });
         // Create wallet client with private key account
         this.walletClient = createWalletClient({
           chain: chainConfig.chain,
-          transport: http(),
+          transport: http(chainConfig.rpcUrl),
           account: this.privateKeyAccount
         });
       }
@@ -1081,7 +1081,7 @@ class YellowPaymentApp {
       if (chainConfig?.chain) {
         this.publicClient = createPublicClient({
           chain: chainConfig.chain,
-          transport: http()
+          transport: http(chainConfig.rpcUrl)
         });
         this.walletClient = createWalletClient({
           chain: chainConfig.chain,
@@ -1149,7 +1149,7 @@ class YellowPaymentApp {
     if (this.walletConnectionType === 'privatekey' && this.privateKeyAccount) {
       return createWalletClient({
         chain: chainConfig.chain,
-        transport: http(),
+        transport: http(chainConfig.rpcUrl),
         account: this.privateKeyAccount
       });
     } else if (this.walletConnectionType === 'walletconnect' && this.walletConnectProvider) {
@@ -1269,7 +1269,7 @@ class YellowPaymentApp {
       const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const amountInUnits = parseUnits(amount.toString(), 6); // USDC has 6 decimals
@@ -1361,7 +1361,7 @@ class YellowPaymentApp {
       try {
         const publicClient = createPublicClient({
           chain: chainConfig.chain,
-          transport: http()
+          transport: http(chainConfig.rpcUrl)
         });
 
         const nitroliteService = new NitroliteService(
@@ -1452,7 +1452,7 @@ class YellowPaymentApp {
       const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const nitroliteService = new NitroliteService(
@@ -1515,7 +1515,7 @@ class YellowPaymentApp {
       const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const amountInUnits = parseUnits(amount.toString(), 6); // USDC has 6 decimals
@@ -1729,7 +1729,7 @@ class YellowPaymentApp {
 
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const nitroliteService = new NitroliteService(
@@ -2504,7 +2504,7 @@ class YellowPaymentApp {
       // For wallet connections, we just use the public client
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const nitroliteService = new NitroliteService(
@@ -2564,7 +2564,7 @@ class YellowPaymentApp {
       const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const nitroliteService = new NitroliteService(
@@ -2684,7 +2684,7 @@ class YellowPaymentApp {
       const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const nitroliteService = new NitroliteService(
@@ -2790,7 +2790,7 @@ class YellowPaymentApp {
       const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const nitroliteService = new NitroliteService(
@@ -3043,7 +3043,7 @@ class YellowPaymentApp {
       const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const nitroliteService = new NitroliteService(
@@ -3142,7 +3142,7 @@ class YellowPaymentApp {
       const walletClient = this.createWalletClientForChain(chainConfig);
       const publicClient = createPublicClient({
         chain: chainConfig.chain,
-        transport: http()
+        transport: http(chainConfig.rpcUrl)
       });
 
       const nitroliteService = new NitroliteService(

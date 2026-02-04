@@ -66,7 +66,8 @@ export const MAINNET_CONFIG = {
       token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // Circle USDC
       custody: '0x6F71a38d919ad713D0AfE0eB712b95064Fc2616f',
       adjudicator: '0x14980dF216722f14c42CA7357b06dEa7eB408b10',
-      chain: mainnet
+      chain: mainnet,
+      rpcUrl: import.meta.env.VITE_ETHEREUM_MAINNET_RPC_URL
     },
     // Base Mainnet
     8453: {
