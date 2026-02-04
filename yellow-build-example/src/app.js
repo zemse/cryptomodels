@@ -205,6 +205,27 @@ class YellowPaymentApp {
             adjudicator: data.channel.adjudicator,
             challenge: data.channel.challenge?.toString(),
             nonce: data.channel.nonce?.toString()
+          } : null,
+          // Convert currentState BigInt values
+          currentState: data.currentState ? {
+            version: data.currentState.version?.toString(),
+            allocations: data.currentState.allocations?.map(a => ({
+              destination: a.destination,
+              token: a.token,
+              amount: a.amount?.toString()
+            }))
+          } : null,
+          // Store latest signed state for closing
+          latestSignedState: data.latestSignedState ? {
+            intent: data.latestSignedState.intent,
+            version: data.latestSignedState.version?.toString(),
+            data: data.latestSignedState.data,
+            allocations: data.latestSignedState.allocations?.map(a => ({
+              destination: a.destination,
+              token: a.token,
+              amount: a.amount?.toString()
+            })),
+            sigs: data.latestSignedState.sigs
           } : null
         });
       });
@@ -231,7 +252,28 @@ class YellowPaymentApp {
               challenge: BigInt(data.channel.challenge || 0),
               nonce: BigInt(data.channel.nonce || 0)
             } : null,
-            chainConfig: this.config.chains[data.chainId]
+            chainConfig: this.config.chains[data.chainId],
+            // Restore currentState with BigInt conversion
+            currentState: data.currentState ? {
+              version: BigInt(data.currentState.version || 0),
+              allocations: data.currentState.allocations?.map(a => ({
+                destination: a.destination,
+                token: a.token,
+                amount: BigInt(a.amount || 0)
+              }))
+            } : null,
+            // Restore latestSignedState
+            latestSignedState: data.latestSignedState ? {
+              intent: data.latestSignedState.intent,
+              version: BigInt(data.latestSignedState.version || 0),
+              data: data.latestSignedState.data,
+              allocations: data.latestSignedState.allocations?.map(a => ({
+                destination: a.destination,
+                token: a.token,
+                amount: BigInt(a.amount || 0)
+              })),
+              sigs: data.latestSignedState.sigs
+            } : null
           };
           this.onChainChannels.set(data.channelId, channelData);
         });
@@ -1585,7 +1627,7 @@ class YellowPaymentApp {
       if (receipt.status === 'success') {
         this.log('Channel created on-chain successfully!');
 
-        // Store channel info
+        // Store channel info including state for payments
         this.onChainChannels.set(channelIdHash, {
           channel,
           channelId: channelIdHash,
@@ -1593,7 +1635,17 @@ class YellowPaymentApp {
           chainConfig,
           tokenAddress: chainConfig.token,
           depositedAmount: Number(amountInUnits),
-          partnerAddress: checksummedPartner
+          partnerAddress: checksummedPartner,
+          // Store for payments - WARNING: storing private key in memory/localStorage
+          partnerPrivateKey: partnerKey,
+          // Current state tracking
+          currentState: {
+            version: 0n,
+            allocations: [
+              { destination: checksummedUser, token: chainConfig.token, amount: amountInUnits },
+              { destination: checksummedPartner, token: chainConfig.token, amount: 0n }
+            ]
+          }
         });
 
         // Clear input
@@ -2935,6 +2987,137 @@ class YellowPaymentApp {
     }
   }
 
+  // Make a payment within a state channel
+  async payInChannel(channelId) {
+    const channelData = this.onChainChannels.get(channelId);
+    if (!channelData) {
+      this.log('Channel not found', 'error');
+      return;
+    }
+
+    if (!channelData.partnerPrivateKey || !channelData.currentState || !channelData.channel) {
+      this.log('Channel does not have required data for payments', 'error');
+      return;
+    }
+
+    // Get payment amount from input
+    const inputId = `${this.prefix}payAmount-${channelId.slice(0, 10)}`;
+    const input = document.getElementById(inputId);
+    const amountStr = input?.value?.trim();
+
+    if (!amountStr || isNaN(parseFloat(amountStr))) {
+      this.log('Please enter a valid amount', 'error');
+      return;
+    }
+
+    const amount = parseFloat(amountStr);
+    if (amount <= 0) {
+      this.log('Amount must be greater than 0', 'error');
+      return;
+    }
+
+    // Convert to microunits (6 decimals for USDC)
+    const amountInUnits = BigInt(Math.floor(amount * 1_000_000));
+
+    // Check current allocation
+    const currentMyAllocation = channelData.currentState.allocations[0].amount;
+    if (amountInUnits > currentMyAllocation) {
+      this.log(`Insufficient balance. You have ${(Number(currentMyAllocation) / 1_000_000).toFixed(6)} USDC`, 'error');
+      return;
+    }
+
+    // Mainnet confirmation
+    if (!await this.confirmMainnetAction('Channel Payment', amount)) {
+      return;
+    }
+
+    try {
+      this.log(`Making payment of ${amount} USDC to partner...`);
+
+      const { chainConfig } = channelData;
+
+      // Calculate new allocations
+      const newMyAllocation = currentMyAllocation - amountInUnits;
+      const newPartnerAllocation = channelData.currentState.allocations[1].amount + amountInUnits;
+      const newVersion = channelData.currentState.version + 1n;
+
+      // Create new state with OPERATE intent (0)
+      const newState = {
+        intent: 0, // OPERATE
+        version: newVersion,
+        data: '0x',
+        allocations: [
+          {
+            destination: channelData.currentState.allocations[0].destination,
+            token: channelConfig.token,
+            amount: newMyAllocation
+          },
+          {
+            destination: channelData.currentState.allocations[1].destination,
+            token: channelConfig.token,
+            amount: newPartnerAllocation
+          }
+        ],
+        sigs: []
+      };
+
+      // Get packed state for signing
+      const packedState = getPackedState(channelId, newState);
+
+      // Sign with user's key
+      let userSignature;
+      const walletClient = this.createWalletClientForChain(chainConfig);
+
+      if (this.walletConnectionType === 'privatekey' && this.privateKeyAccount) {
+        userSignature = await this.privateKeyAccount.signMessage({
+          message: { raw: packedState }
+        });
+      } else {
+        userSignature = await walletClient.signMessage({
+          account: this.userAddress,
+          message: { raw: packedState }
+        });
+      }
+      this.log('Your signature obtained');
+
+      // Sign with partner's key
+      const partnerAccount = privateKeyToAccount(channelData.partnerPrivateKey);
+      const partnerSignature = await partnerAccount.signMessage({
+        message: { raw: packedState }
+      });
+      this.log('Partner signature obtained');
+
+      // Create signed state
+      const signedState = {
+        ...newState,
+        sigs: [userSignature, partnerSignature]
+      };
+
+      // Update channel data with new state
+      channelData.currentState = {
+        version: newVersion,
+        allocations: newState.allocations
+      };
+      channelData.latestSignedState = signedState;
+
+      // Save to storage
+      this.saveChannelsToStorage();
+      this.renderChannelsList();
+
+      this.log(`Payment successful! Sent ${amount} USDC to partner`);
+      this.log(`New state version: ${newVersion}`);
+      this.log(`Your balance: ${(Number(newMyAllocation) / 1_000_000).toFixed(6)} USDC`);
+      this.log(`Partner balance: ${(Number(newPartnerAllocation) / 1_000_000).toFixed(6)} USDC`);
+
+      // Clear input
+      if (input) input.value = '';
+
+    } catch (error) {
+      console.error('Payment error:', error);
+      this.log(`Payment failed: ${error.message}`, 'error');
+    }
+  }
+
   renderChannelsList() {
     const container = this.elements.channelsList;
     if (!container) return;
@@ -2964,24 +3147,61 @@ class YellowPaymentApp {
       this.onChainChannels.forEach((data, channelId) => {
         const chainName = data.chainConfig?.name || this.config.chains[data.chainId]?.name || `Chain ${data.chainId}`;
         const channelIdShort = channelId.slice(0, 10) + '...' + channelId.slice(-6);
-        const amount = data.depositedAmount ? (data.depositedAmount / 1_000_000).toFixed(6) : 'Unknown';
         const partner = data.partnerAddress ? `${data.partnerAddress.slice(0, 6)}...${data.partnerAddress.slice(-4)}` : 'Unknown';
         const recoveredBadge = data.recovered ? '<span style="background: #9c27b0; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-left: 4px;">Recovered</span>' : '';
 
+        // Get current allocations
+        const myAllocation = data.currentState?.allocations?.[0]?.amount || BigInt(data.depositedAmount || 0);
+        const partnerAllocation = data.currentState?.allocations?.[1]?.amount || 0n;
+        const myAmount = (Number(myAllocation) / 1_000_000).toFixed(6);
+        const partnerAmount = (Number(partnerAllocation) / 1_000_000).toFixed(6);
+        const stateVersion = data.currentState?.version?.toString() || '0';
+
+        // Check if payment is possible (has partner key and state)
+        const canPay = data.partnerPrivateKey && data.currentState && data.channel;
+
         html += `
           <div style="background: rgba(255,215,0,0.1); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid rgba(255,215,0,0.3);">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-              <div style="flex: 1; min-width: 0;">
-                <strong>${chainName}</strong>${recoveredBadge}<br>
-                <span style="color: #888; font-size: 0.75rem; word-break: break-all;">${channelIdShort}</span><br>
-                <span style="color: #4caf50; font-size: 0.9rem;">${amount} USDC</span><br>
-                <span style="color: #888; font-size: 0.75rem;">Partner: ${partner}</span>
+            <div style="margin-bottom: 0.5rem;">
+              <strong>${chainName}</strong>${recoveredBadge}
+              <span style="color: #888; font-size: 0.7rem; margin-left: 0.5rem;">v${stateVersion}</span><br>
+              <span style="color: #888; font-size: 0.75rem; word-break: break-all;">${channelIdShort}</span>
+            </div>
+
+            <!-- Allocations display -->
+            <div style="display: flex; gap: 1rem; margin-bottom: 0.75rem; padding: 0.5rem; background: rgba(0,0,0,0.2); border-radius: 4px;">
+              <div style="flex: 1; text-align: center;">
+                <div style="color: #4caf50; font-size: 0.9rem; font-weight: bold;">${myAmount}</div>
+                <div style="color: #888; font-size: 0.7rem;">Your USDC</div>
               </div>
-              <button onclick="window.${this.prefix.replace('-', '')}app.closeChannel('${channelId}')"
-                style="background: #f44336; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; margin-left: 0.5rem;">
-                Close & Withdraw
+              <div style="flex: 1; text-align: center;">
+                <div style="color: #ff9800; font-size: 0.9rem; font-weight: bold;">${partnerAmount}</div>
+                <div style="color: #888; font-size: 0.7rem;">Partner: ${partner}</div>
+              </div>
+            </div>
+
+            ${canPay ? `
+            <!-- Payment input -->
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+              <input type="number" id="${this.prefix}payAmount-${channelId.slice(0, 10)}"
+                placeholder="Amount" step="0.000001" min="0" max="${myAmount}"
+                style="flex: 1; padding: 0.4rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; font-size: 0.8rem;">
+              <button onclick="window.${this.prefix.replace('-', '')}app.payInChannel('${channelId}')"
+                style="background: #4caf50; color: white; padding: 0.4rem 0.8rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
+                Pay →
               </button>
             </div>
+            ` : `
+            <div style="color: #888; font-size: 0.75rem; margin-bottom: 0.5rem; font-style: italic;">
+              ${data.recovered ? 'Recovered channels cannot make payments (no signing keys)' : 'Payment not available'}
+            </div>
+            `}
+
+            <!-- Close button -->
+            <button onclick="window.${this.prefix.replace('-', '')}app.closeChannel('${channelId}')"
+              style="background: #f44336; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; width: 100%;">
+              Close & Withdraw
+            </button>
           </div>
         `;
       });
