@@ -118,8 +118,8 @@ class YellowPaymentApp {
     this.privateKeyAccount = null;
     this.walletConnectProvider = null;
 
-    // Load persisted channels from localStorage
-    this.loadChannelsFromStorage();
+    // Channels will be fetched from chain after wallet connection
+    // (no more localStorage persistence)
 
     // Event listeners
     this.elements.connectBtn?.addEventListener('click', () => this.connectWallet());
@@ -134,7 +134,10 @@ class YellowPaymentApp {
     });
     this.elements.createSessionBtn?.addEventListener('click', () => this.createSession());
     this.elements.createChannelBtn?.addEventListener('click', () => this.createChannel());
-    this.elements.refreshChannelsBtn?.addEventListener('click', () => this.getChannels());
+    this.elements.refreshChannelsBtn?.addEventListener('click', async () => {
+      await this.getChannels();
+      await this.fetchChannelsFromChain();
+    });
     this.elements.checkCustodyBtn?.addEventListener('click', () => this.checkCustodyBalance());
     this.elements.withdrawToWalletBtn?.addEventListener('click', () => this.withdrawToWallet());
 
@@ -186,102 +189,135 @@ class YellowPaymentApp {
     return confirm(message);
   }
 
-  // LocalStorage key for channels
-  getChannelsStorageKey() {
-    return `yellow_${this.environment}_onChainChannels`;
-  }
-
-  // Save channels to localStorage
-  saveChannelsToStorage() {
-    try {
-      const channelsArray = [];
-      this.onChainChannels.forEach((data, channelId) => {
-        channelsArray.push({
-          channelId,
-          ...data,
-          // Convert non-serializable data
-          channel: data.channel ? {
-            participants: data.channel.participants,
-            adjudicator: data.channel.adjudicator,
-            challenge: data.channel.challenge?.toString(),
-            nonce: data.channel.nonce?.toString()
-          } : null,
-          // Convert currentState BigInt values
-          currentState: data.currentState ? {
-            version: data.currentState.version?.toString(),
-            allocations: data.currentState.allocations?.map(a => ({
-              destination: a.destination,
-              token: a.token,
-              amount: a.amount?.toString()
-            }))
-          } : null,
-          // Store latest signed state for closing
-          latestSignedState: data.latestSignedState ? {
-            intent: data.latestSignedState.intent,
-            version: data.latestSignedState.version?.toString(),
-            data: data.latestSignedState.data,
-            allocations: data.latestSignedState.allocations?.map(a => ({
-              destination: a.destination,
-              token: a.token,
-              amount: a.amount?.toString()
-            })),
-            sigs: data.latestSignedState.sigs
-          } : null
-        });
-      });
-      localStorage.setItem(this.getChannelsStorageKey(), JSON.stringify(channelsArray));
-      this.log(`Saved ${channelsArray.length} channel(s) to storage`);
-    } catch (error) {
-      console.error('Failed to save channels to storage:', error);
+  // Fetch channels from on-chain events (replaces localStorage)
+  async fetchChannelsFromChain() {
+    if (!this.userAddress) {
+      console.log(`[${this.environment}] No user address, skipping channel fetch`);
+      return;
     }
-  }
 
-  // Load channels from localStorage
-  loadChannelsFromStorage() {
-    try {
-      const stored = localStorage.getItem(this.getChannelsStorageKey());
-      if (stored) {
-        const channelsArray = JSON.parse(stored);
-        channelsArray.forEach(data => {
-          // Restore channel data with BigInt conversion
-          const channelData = {
-            ...data,
-            channel: data.channel ? {
-              participants: data.channel.participants,
-              adjudicator: data.channel.adjudicator,
-              challenge: BigInt(data.channel.challenge || 0),
-              nonce: BigInt(data.channel.nonce || 0)
-            } : null,
-            chainConfig: this.config.chains[data.chainId],
-            // Restore currentState with BigInt conversion
-            currentState: data.currentState ? {
-              version: BigInt(data.currentState.version || 0),
-              allocations: data.currentState.allocations?.map(a => ({
-                destination: a.destination,
-                token: a.token,
-                amount: BigInt(a.amount || 0)
-              }))
-            } : null,
-            // Restore latestSignedState
-            latestSignedState: data.latestSignedState ? {
-              intent: data.latestSignedState.intent,
-              version: BigInt(data.latestSignedState.version || 0),
-              data: data.latestSignedState.data,
-              allocations: data.latestSignedState.allocations?.map(a => ({
-                destination: a.destination,
-                token: a.token,
-                amount: BigInt(a.amount || 0)
-              })),
-              sigs: data.latestSignedState.sigs
-            } : null
-          };
-          this.onChainChannels.set(data.channelId, channelData);
+    this.log('Fetching channels from chain...');
+    this.onChainChannels.clear();
+
+    // Created event ABI
+    const createdEventAbi = [{
+      type: 'event',
+      name: 'Created',
+      inputs: [
+        { name: 'channelId', type: 'bytes32', indexed: true },
+        { name: 'wallet', type: 'address', indexed: true },
+        { name: 'channel', type: 'tuple', indexed: false, components: [
+          { name: 'participants', type: 'address[]' },
+          { name: 'adjudicator', type: 'address' },
+          { name: 'challenge', type: 'uint64' },
+          { name: 'nonce', type: 'uint64' }
+        ]},
+        { name: 'initial', type: 'tuple', indexed: false, components: [
+          { name: 'intent', type: 'uint8' },
+          { name: 'version', type: 'uint64' },
+          { name: 'data', type: 'bytes' },
+          { name: 'allocations', type: 'tuple[]', components: [
+            { name: 'destination', type: 'address' },
+            { name: 'token', type: 'address' },
+            { name: 'amount', type: 'uint256' }
+          ]},
+          { name: 'sigs', type: 'bytes[]' }
+        ]}
+      ]
+    }];
+
+    const getChannelBalancesAbi = [{
+      name: 'getChannelBalances',
+      type: 'function',
+      stateMutability: 'view',
+      inputs: [
+        { name: 'channelId', type: 'bytes32' },
+        { name: 'tokens', type: 'address[]' }
+      ],
+      outputs: [{ name: 'balances', type: 'uint256[]' }]
+    }];
+
+    // Query each chain
+    for (const [chainIdStr, chainConfig] of Object.entries(this.config.chains)) {
+      const chainId = parseInt(chainIdStr);
+      if (!chainConfig.chain) continue; // Skip chains without viem config
+
+      try {
+        const publicClient = createPublicClient({
+          chain: chainConfig.chain,
+          transport: http(chainConfig.rpcUrl)
         });
-        console.log(`[${this.environment}] Loaded ${channelsArray.length} channel(s) from storage`);
+
+        // Get Created events where wallet is the user
+        const logs = await publicClient.getLogs({
+          address: chainConfig.custody,
+          event: createdEventAbi[0],
+          args: { wallet: this.userAddress },
+          fromBlock: 'earliest',
+          toBlock: 'latest'
+        });
+
+        this.log(`Found ${logs.length} channel(s) on ${chainConfig.name}`);
+
+        // For each channel, check current balance
+        for (const log of logs) {
+          const channelId = log.args.channelId;
+          const channel = log.args.channel;
+          const initial = log.args.initial;
+
+          // Get current balance
+          const balances = await publicClient.readContract({
+            address: chainConfig.custody,
+            abi: getChannelBalancesAbi,
+            functionName: 'getChannelBalances',
+            args: [channelId, [chainConfig.token]]
+          });
+
+          const balance = balances && balances[0] ? balances[0] : 0n;
+
+          // Only add channels with balance > 0 (open channels)
+          if (balance > 0n) {
+            // Find partner (the other participant)
+            const partnerAddress = channel.participants.find(
+              p => p.toLowerCase() !== this.userAddress.toLowerCase()
+            );
+
+            this.onChainChannels.set(channelId, {
+              channelId,
+              chainId,
+              chainConfig,
+              channel: {
+                participants: channel.participants,
+                adjudicator: channel.adjudicator,
+                challenge: channel.challenge,
+                nonce: channel.nonce
+              },
+              depositedAmount: Number(balance),
+              tokenAddress: chainConfig.token,
+              partnerAddress,
+              currentState: {
+                version: 0n,
+                allocations: initial.allocations.map(a => ({
+                  destination: a.destination,
+                  token: a.token,
+                  amount: a.amount
+                }))
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to fetch channels from ${chainConfig.name}:`, error);
       }
-    } catch (error) {
-      console.error('Failed to load channels from storage:', error);
     }
+
+    this.log(`Loaded ${this.onChainChannels.size} active channel(s) from chain`);
+    this.renderChannelsList();
+  }
+
+  // No-op for backward compatibility (removed localStorage persistence)
+  saveChannelsToStorage() {
+    // Channels are now fetched from chain, no need to save locally
   }
 
   // Manually recover an existing on-chain channel
@@ -724,6 +760,7 @@ class YellowPaymentApp {
       await this.getChannels();
       await this.getAppSessions();
       await this.refreshOnChainBalances();
+      await this.fetchChannelsFromChain();
 
     } catch (error) {
       this.log(`Failed to connect wallet: ${error.message}`, 'error');
@@ -3049,12 +3086,12 @@ class YellowPaymentApp {
         allocations: [
           {
             destination: channelData.currentState.allocations[0].destination,
-            token: channelConfig.token,
+            token: channelData.currentState.allocations[0].token,
             amount: newMyAllocation
           },
           {
             destination: channelData.currentState.allocations[1].destination,
-            token: channelConfig.token,
+            token: channelData.currentState.allocations[1].token,
             amount: newPartnerAllocation
           }
         ],
@@ -3182,18 +3219,28 @@ class YellowPaymentApp {
 
             ${canPay ? `
             <!-- Payment input -->
-            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <div style="margin-bottom: 0.5rem;">
               <input type="number" id="${this.prefix}payAmount-${channelId.slice(0, 10)}"
-                placeholder="Amount" step="0.000001" min="0" max="${myAmount}"
-                style="flex: 1; padding: 0.4rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; font-size: 0.8rem;">
+                placeholder="Amount (USDC)" step="0.000001" min="0" max="${myAmount}"
+                style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; font-size: 0.9rem; margin-bottom: 0.5rem; box-sizing: border-box;">
               <button onclick="window.${this.prefix.replace('-', '')}app.payInChannel('${channelId}')"
-                style="background: #4caf50; color: white; padding: 0.4rem 0.8rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
-                Pay →
+                style="background: #4caf50; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; width: 100%;">
+                Pay Partner →
               </button>
             </div>
             ` : `
-            <div style="color: #888; font-size: 0.75rem; margin-bottom: 0.5rem; font-style: italic;">
-              ${data.recovered ? 'Recovered channels cannot make payments (no signing keys)' : 'Payment not available'}
+            <!-- Add partner key to enable payments -->
+            <div style="margin-bottom: 0.5rem;">
+              <p style="color: #888; font-size: 0.75rem; margin-bottom: 0.3rem; font-style: italic;">
+                ${data.recovered ? 'Add partner key to enable payments:' : 'Partner key missing. Add to enable payments:'}
+              </p>
+              <input type="text" id="${this.prefix}partnerKey-${channelId.slice(0, 10)}"
+                placeholder="Partner private key (0x...)"
+                style="width: 100%; padding: 0.5rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; font-size: 0.8rem; font-family: monospace; margin-bottom: 0.5rem; box-sizing: border-box;">
+              <button onclick="window.${this.prefix.replace('-', '')}app.addPartnerKeyToChannel('${channelId}')"
+                style="background: #9c27b0; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%;">
+                Add Partner Key
+              </button>
             </div>
             `}
 
@@ -3201,6 +3248,10 @@ class YellowPaymentApp {
             <button onclick="window.${this.prefix.replace('-', '')}app.closeChannel('${channelId}')"
               style="background: #f44336; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; width: 100%;">
               Close & Withdraw
+            </button>
+            <button onclick="window.${this.prefix.replace('-', '')}app.removeChannelFromList('${channelId}')"
+              style="background: transparent; color: #888; padding: 0.3rem; border: none; cursor: pointer; font-size: 0.7rem; width: 100%; margin-top: 0.3rem;">
+              Remove from list
             </button>
           </div>
         `;
@@ -3244,6 +3295,19 @@ class YellowPaymentApp {
     container.innerHTML = html;
   }
 
+  // Remove channel from local tracking (doesn't close on-chain)
+  removeChannelFromList(channelId) {
+    if (!this.onChainChannels.has(channelId)) {
+      this.log('Channel not found in list', 'error');
+      return;
+    }
+
+    this.onChainChannels.delete(channelId);
+    this.saveChannelsToStorage();
+    this.renderChannelsList();
+    this.log(`Removed channel ${channelId.slice(0, 10)}... from list. You can re-recover it to refresh data.`);
+  }
+
   // UI handler for recover channel
   async recoverChannelFromUI() {
     const channelIdInput = document.getElementById(`${this.prefix}recoverChannelId`);
@@ -3265,6 +3329,81 @@ class YellowPaymentApp {
     const success = await this.recoverChannel(channelId, chainId);
     if (success && channelIdInput) {
       channelIdInput.value = '';
+    }
+  }
+
+  // Add partner private key to an existing channel to enable payments
+  async addPartnerKeyToChannel(channelId) {
+    const input = document.getElementById(`${this.prefix}partnerKey-${channelId.slice(0, 10)}`);
+    const partnerKey = input?.value.trim();
+
+    if (!partnerKey) {
+      this.log('Please enter the partner private key', 'error');
+      return;
+    }
+
+    if (!partnerKey.startsWith('0x') || partnerKey.length !== 66) {
+      this.log('Invalid private key format (should be 0x + 64 hex chars)', 'error');
+      return;
+    }
+
+    const channelData = this.onChainChannels.get(channelId);
+    if (!channelData) {
+      this.log('Channel not found', 'error');
+      return;
+    }
+
+    try {
+      // Derive partner address from private key to verify
+      const { privateKeyToAccount } = await import('viem/accounts');
+      const partnerAccount = privateKeyToAccount(partnerKey);
+
+      this.log(`Partner key added for address: ${partnerAccount.address}`);
+
+      // Update channel data with the partner key and address
+      channelData.partnerPrivateKey = partnerKey;
+      channelData.partnerAddress = partnerAccount.address;
+
+      // If this is a recovered channel without proper state, initialize it
+      if (!channelData.currentState || !channelData.currentState.allocations) {
+        // Use balances from recovery - depositedAmount is already in microunits (raw contract value)
+        const myBalance = channelData.myBalance || BigInt(channelData.depositedAmount || 0);
+        const partnerBalance = channelData.partnerBalance || 0n;
+
+        channelData.currentState = {
+          version: 0n,
+          allocations: [
+            { destination: this.userAddress, token: channelData.tokenAddress, amount: myBalance },
+            { destination: partnerAccount.address, token: channelData.tokenAddress, amount: partnerBalance }
+          ]
+        };
+      }
+
+      // If we don't have channel object (needed for signing), create minimal structure
+      if (!channelData.channel) {
+        const chainConfig = channelData.chainConfig || this.config.chains[channelData.chainId];
+        if (chainConfig) {
+          channelData.channel = {
+            participants: [this.userAddress, partnerAccount.address],
+            adjudicator: chainConfig.adjudicator,
+            challenge: 0n,
+            nonce: BigInt(Date.now())
+          };
+        }
+      }
+
+      // Save to storage
+      this.saveChannelsToStorage();
+      this.renderChannelsList();
+
+      this.log('Partner key added successfully! You can now make payments.', 'success');
+
+      // Clear input
+      if (input) input.value = '';
+
+    } catch (error) {
+      console.error('Failed to add partner key:', error);
+      this.log(`Failed to add partner key: ${error.message}`, 'error');
     }
   }
 }

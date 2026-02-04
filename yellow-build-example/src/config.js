@@ -74,7 +74,8 @@ export const MAINNET_CONFIG = {
       token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
       custody: '0x490fb189DdE3a01B00be9BA5F41e3447FbC838b6',
       adjudicator: '0x7de4A0736Cf5740fD3Ca2F2e9cc85c9AC223eF0C',
-      chain: base
+      chain: base,
+      rpcUrl: import.meta.env.VITE_BASE_MAINNET_RPC_URL
     }
   },
 
