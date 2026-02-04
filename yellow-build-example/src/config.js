@@ -15,7 +15,8 @@ export const TESTNET_CONFIG = {
       token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
       custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
       adjudicator: '0x7c7ccbc98469190849BCC6c926307794fDfB11F2',
-      chain: sepolia
+      chain: sepolia,
+      explorerUrl: 'https://sepolia.etherscan.io'
     },
     // Base Sepolia
     84532: {
@@ -23,7 +24,8 @@ export const TESTNET_CONFIG = {
       token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
       custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
       adjudicator: '0x7c7ccbc98469190849BCC6c926307794fDfB11F2',
-      chain: baseSepolia
+      chain: baseSepolia,
+      explorerUrl: 'https://sepolia.basescan.org'
     },
     // Polygon Amoy
     80002: {
@@ -31,7 +33,8 @@ export const TESTNET_CONFIG = {
       token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
       custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
       adjudicator: null,
-      chain: null
+      chain: null,
+      explorerUrl: 'https://amoy.polygonscan.com'
     },
     // Linea Sepolia
     59141: {
@@ -39,7 +42,8 @@ export const TESTNET_CONFIG = {
       token: '0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb',
       custody: '0x019B65A265EB3363822f2752141b3dF16131b262',
       adjudicator: null,
-      chain: null
+      chain: null,
+      explorerUrl: 'https://sepolia.lineascan.build'
     }
   },
 
@@ -67,7 +71,8 @@ export const MAINNET_CONFIG = {
       custody: '0x6F71a38d919ad713D0AfE0eB712b95064Fc2616f',
       adjudicator: '0x14980dF216722f14c42CA7357b06dEa7eB408b10',
       chain: mainnet,
-      rpcUrl: import.meta.env.VITE_ETHEREUM_MAINNET_RPC_URL
+      rpcUrl: import.meta.env.VITE_ETHEREUM_MAINNET_RPC_URL,
+      explorerUrl: 'https://etherscan.io'
     },
     // Base Mainnet
     8453: {
@@ -76,7 +81,8 @@ export const MAINNET_CONFIG = {
       custody: '0x490fb189DdE3a01B00be9BA5F41e3447FbC838b6',
       adjudicator: '0x7de4A0736Cf5740fD3Ca2F2e9cc85c9AC223eF0C',
       chain: base,
-      rpcUrl: import.meta.env.VITE_BASE_MAINNET_RPC_URL
+      rpcUrl: import.meta.env.VITE_BASE_MAINNET_RPC_URL,
+      explorerUrl: 'https://basescan.org'
     }
   },
 
