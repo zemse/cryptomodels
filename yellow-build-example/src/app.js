@@ -110,7 +110,34 @@ class YellowPaymentApp {
       // Wallet connection options
       walletType: this.getElement('walletType'),
       pkInput: this.getElement('pkInput'),
-      pkInputWrapper: this.getElement('pkInputWrapper')
+      pkInputWrapper: this.getElement('pkInputWrapper'),
+      // SDK Functions
+      sdkResult: this.getElement('sdk-result'),
+      // SDK Getters
+      sdkGetOpenChannels: this.getElement('sdk-getOpenChannels'),
+      sdkGetAccountBalance: this.getElement('sdk-getAccountBalance'),
+      sdkGetAccountBalanceToken: this.getElement('sdk-getAccountBalance-token'),
+      sdkGetChannelBalance: this.getElement('sdk-getChannelBalance'),
+      sdkGetChannelBalanceChannelId: this.getElement('sdk-getChannelBalance-channelId'),
+      sdkGetChannelBalanceToken: this.getElement('sdk-getChannelBalance-token'),
+      sdkGetChannelData: this.getElement('sdk-getChannelData'),
+      sdkGetChannelDataChannelId: this.getElement('sdk-getChannelData-channelId'),
+      sdkGetTokenAllowance: this.getElement('sdk-getTokenAllowance'),
+      sdkGetTokenAllowanceToken: this.getElement('sdk-getTokenAllowance-token'),
+      sdkGetTokenBalance: this.getElement('sdk-getTokenBalance'),
+      sdkGetTokenBalanceToken: this.getElement('sdk-getTokenBalance-token'),
+      // SDK Setters
+      sdkDeposit: this.getElement('sdk-deposit'),
+      sdkDepositToken: this.getElement('sdk-deposit-token'),
+      sdkDepositAmount: this.getElement('sdk-deposit-amount'),
+      sdkWithdrawal: this.getElement('sdk-withdrawal'),
+      sdkWithdrawalToken: this.getElement('sdk-withdrawal-token'),
+      sdkWithdrawalAmount: this.getElement('sdk-withdrawal-amount'),
+      sdkApproveTokens: this.getElement('sdk-approveTokens'),
+      sdkApproveTokensToken: this.getElement('sdk-approveTokens-token'),
+      sdkApproveTokensAmount: this.getElement('sdk-approveTokens-amount'),
+      sdkCloseChannel: this.getElement('sdk-closeChannel'),
+      sdkCloseChannelChannelId: this.getElement('sdk-closeChannel-channelId')
     };
 
     // Wallet type state
@@ -156,6 +183,18 @@ class YellowPaymentApp {
 
     // On-chain channel creation event listener
     this.elements.createOnChainChannelBtn?.addEventListener('click', () => this.createOnChainChannel());
+
+    // SDK Functions event listeners
+    this.elements.sdkGetOpenChannels?.addEventListener('click', () => this.sdkCall('getOpenChannels'));
+    this.elements.sdkGetAccountBalance?.addEventListener('click', () => this.sdkCall('getAccountBalance'));
+    this.elements.sdkGetChannelBalance?.addEventListener('click', () => this.sdkCall('getChannelBalance'));
+    this.elements.sdkGetChannelData?.addEventListener('click', () => this.sdkCall('getChannelData'));
+    this.elements.sdkGetTokenAllowance?.addEventListener('click', () => this.sdkCall('getTokenAllowance'));
+    this.elements.sdkGetTokenBalance?.addEventListener('click', () => this.sdkCall('getTokenBalance'));
+    this.elements.sdkDeposit?.addEventListener('click', () => this.sdkCall('deposit'));
+    this.elements.sdkWithdrawal?.addEventListener('click', () => this.sdkCall('withdrawal'));
+    this.elements.sdkApproveTokens?.addEventListener('click', () => this.sdkCall('approveTokens'));
+    this.elements.sdkCloseChannel?.addEventListener('click', () => this.sdkCall('closeChannel'));
 
     // Render any loaded channels
     this.renderChannelsList();
@@ -468,6 +507,150 @@ class YellowPaymentApp {
     if (this.elements.refreshOnChainBtn) this.elements.refreshOnChainBtn.disabled = false;
     if (this.elements.depositAndCreateBtn) this.elements.depositAndCreateBtn.disabled = false;
     if (this.elements.createOnChainChannelBtn) this.elements.createOnChainChannelBtn.disabled = false;
+    // SDK buttons
+    if (this.elements.sdkGetOpenChannels) this.elements.sdkGetOpenChannels.disabled = false;
+    if (this.elements.sdkGetAccountBalance) this.elements.sdkGetAccountBalance.disabled = false;
+    if (this.elements.sdkGetChannelBalance) this.elements.sdkGetChannelBalance.disabled = false;
+    if (this.elements.sdkGetChannelData) this.elements.sdkGetChannelData.disabled = false;
+    if (this.elements.sdkGetTokenAllowance) this.elements.sdkGetTokenAllowance.disabled = false;
+    if (this.elements.sdkGetTokenBalance) this.elements.sdkGetTokenBalance.disabled = false;
+    if (this.elements.sdkDeposit) this.elements.sdkDeposit.disabled = false;
+    if (this.elements.sdkWithdrawal) this.elements.sdkWithdrawal.disabled = false;
+    if (this.elements.sdkApproveTokens) this.elements.sdkApproveTokens.disabled = false;
+    if (this.elements.sdkCloseChannel) this.elements.sdkCloseChannel.disabled = false;
+  }
+
+  // SDK Functions handler
+  async sdkCall(method) {
+    const resultEl = this.elements.sdkResult;
+    if (resultEl) resultEl.textContent = 'Calling...';
+
+    try {
+      // Get default chain config (Base for mainnet, Sepolia for testnet)
+      const defaultChainId = this.environment === 'mainnet' ? 8453 : 11155111;
+      const chainConfig = this.config.chains[defaultChainId];
+
+      if (!chainConfig?.chain) {
+        throw new Error(`Chain config not available for ${defaultChainId}`);
+      }
+
+      // Create NitroliteService instance
+      const nitroliteService = new NitroliteService(
+        chainConfig.custody,
+        this.walletClient,
+        this.publicClient
+      );
+
+      let result;
+
+      switch (method) {
+        case 'getOpenChannels': {
+          result = await nitroliteService.getOpenChannels();
+          break;
+        }
+
+        case 'getAccountBalance': {
+          const token = this.elements.sdkGetAccountBalanceToken?.value.trim();
+          if (!token) throw new Error('Token address required');
+          result = await nitroliteService.getAccountBalance(this.userAddress, token);
+          result = { balance: result.toString(), formatted: `${Number(result) / 1_000_000} USDC` };
+          break;
+        }
+
+        case 'getChannelBalance': {
+          const channelId = this.elements.sdkGetChannelBalanceChannelId?.value.trim();
+          const token = this.elements.sdkGetChannelBalanceToken?.value.trim();
+          if (!channelId) throw new Error('Channel ID required');
+          if (!token) throw new Error('Token address required');
+          result = await nitroliteService.getChannelBalance(channelId, token);
+          result = { balance: result.toString(), formatted: `${Number(result) / 1_000_000} USDC` };
+          break;
+        }
+
+        case 'getChannelData': {
+          const channelId = this.elements.sdkGetChannelDataChannelId?.value.trim();
+          if (!channelId) throw new Error('Channel ID required');
+          result = await nitroliteService.getChannelData(channelId);
+          // Convert BigInts to strings for display
+          result = JSON.parse(JSON.stringify(result, (key, value) =>
+            typeof value === 'bigint' ? value.toString() : value
+          ));
+          break;
+        }
+
+        case 'getTokenAllowance': {
+          const token = this.elements.sdkGetTokenAllowanceToken?.value.trim();
+          if (!token) throw new Error('Token address required');
+          result = await nitroliteService.getTokenAllowance(token);
+          result = { allowance: result.toString(), formatted: `${Number(result) / 1_000_000} USDC` };
+          break;
+        }
+
+        case 'getTokenBalance': {
+          const token = this.elements.sdkGetTokenBalanceToken?.value.trim();
+          if (!token) throw new Error('Token address required');
+          result = await nitroliteService.getTokenBalance(token);
+          result = { balance: result.toString(), formatted: `${Number(result) / 1_000_000} USDC` };
+          break;
+        }
+
+        case 'deposit': {
+          const token = this.elements.sdkDepositToken?.value.trim();
+          const amount = this.elements.sdkDepositAmount?.value.trim();
+          if (!token) throw new Error('Token address required');
+          if (!amount) throw new Error('Amount required');
+          const txHash = await nitroliteService.deposit(token, BigInt(amount));
+          result = { txHash, message: 'Deposit successful!' };
+          break;
+        }
+
+        case 'withdrawal': {
+          const token = this.elements.sdkWithdrawalToken?.value.trim();
+          const amount = this.elements.sdkWithdrawalAmount?.value.trim();
+          if (!token) throw new Error('Token address required');
+          if (!amount) throw new Error('Amount required');
+          const txHash = await nitroliteService.withdraw(token, BigInt(amount));
+          result = { txHash, message: 'Withdrawal successful!' };
+          break;
+        }
+
+        case 'approveTokens': {
+          const token = this.elements.sdkApproveTokensToken?.value.trim();
+          const amount = this.elements.sdkApproveTokensAmount?.value.trim();
+          if (!token) throw new Error('Token address required');
+          if (!amount) throw new Error('Amount required');
+          const txHash = await nitroliteService.approveTokens(token, BigInt(amount));
+          result = { txHash, message: 'Approval successful!' };
+          break;
+        }
+
+        case 'closeChannel': {
+          const channelId = this.elements.sdkCloseChannelChannelId?.value.trim();
+          if (!channelId) throw new Error('Channel ID required');
+          // Note: closeChannel requires additional params (state, proofs) - simplified here
+          result = { error: 'closeChannel requires signed state - use the channel close button instead' };
+          break;
+        }
+
+        default:
+          throw new Error(`Unknown method: ${method}`);
+      }
+
+      // Display result
+      if (resultEl) {
+        resultEl.textContent = JSON.stringify(result, null, 2);
+        resultEl.style.color = '#4caf50';
+      }
+      this.log(`SDK ${method}: Success`);
+
+    } catch (error) {
+      console.error(`SDK ${method} error:`, error);
+      if (resultEl) {
+        resultEl.textContent = `Error: ${error.message}`;
+        resultEl.style.color = '#f44336';
+      }
+      this.log(`SDK ${method}: ${error.message}`, 'error');
+    }
   }
 
   handleMessage(data) {

@@ -506,6 +506,103 @@
         <div id="testnet-channelsList" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
       </div>
 
+      <!-- SDK Functions -->
+      <div class="card">
+        <h2>SDK Functions</h2>
+        <p style="font-size: 0.8rem; color: #888; margin-bottom: 1rem;">Direct access to NitroliteClient SDK methods</p>
+
+        <!-- Getters Section -->
+        <div style="background: rgba(74, 144, 217, 0.1); border: 1px solid #4a90d9; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+          <h3 style="color: #4a90d9; font-size: 0.9rem; margin-bottom: 0.75rem;">📖 Read Functions (Getters)</h3>
+
+          <!-- getOpenChannels -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getOpenChannels()</span>
+              <button id="testnet-sdk-getOpenChannels" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer;">Call</button>
+            </div>
+          </div>
+
+          <!-- getAccountBalance -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getAccountBalance(tokenAddress)</span>
+            <input type="text" id="testnet-sdk-getAccountBalance-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-getAccountBalance" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- getChannelBalance -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getChannelBalance(channelId, tokenAddress)</span>
+            <input type="text" id="testnet-sdk-getChannelBalance-channelId" placeholder="Channel ID (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <input type="text" id="testnet-sdk-getChannelBalance-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-getChannelBalance" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- getChannelData -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getChannelData(channelId)</span>
+            <input type="text" id="testnet-sdk-getChannelData-channelId" placeholder="Channel ID (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-getChannelData" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- getTokenAllowance -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getTokenAllowance(tokenAddress)</span>
+            <input type="text" id="testnet-sdk-getTokenAllowance-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-getTokenAllowance" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- getTokenBalance -->
+          <div>
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getTokenBalance(tokenAddress)</span>
+            <input type="text" id="testnet-sdk-getTokenBalance-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-getTokenBalance" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+        </div>
+
+        <!-- Setters Section -->
+        <div style="background: rgba(255, 152, 0, 0.1); border: 1px solid #ff9800; border-radius: 8px; padding: 1rem;">
+          <h3 style="color: #ff9800; font-size: 0.9rem; margin-bottom: 0.75rem;">✏️ Write Functions (Setters)</h3>
+
+          <!-- deposit -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,152,0,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #ff9800;">deposit(tokenAddress, amount)</span>
+            <input type="text" id="testnet-sdk-deposit-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <input type="text" id="testnet-sdk-deposit-amount" placeholder="Amount (in wei/units)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-deposit" disabled style="background: #ff9800; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- withdrawal -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,152,0,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #ff9800;">withdrawal(tokenAddress, amount)</span>
+            <input type="text" id="testnet-sdk-withdrawal-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <input type="text" id="testnet-sdk-withdrawal-amount" placeholder="Amount (in wei/units)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-withdrawal" disabled style="background: #ff9800; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- approveTokens -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,152,0,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #ff9800;">approveTokens(tokenAddress, amount)</span>
+            <input type="text" id="testnet-sdk-approveTokens-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <input type="text" id="testnet-sdk-approveTokens-amount" placeholder="Amount (in wei/units)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-approveTokens" disabled style="background: #ff9800; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- closeChannel -->
+          <div>
+            <span style="font-family: monospace; font-size: 0.8rem; color: #ff9800;">closeChannel(channelId)</span>
+            <input type="text" id="testnet-sdk-closeChannel-channelId" placeholder="Channel ID (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="testnet-sdk-closeChannel" disabled style="background: #ff9800; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+        </div>
+
+        <!-- SDK Result Display -->
+        <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,0,0,0.3); border-radius: 8px;">
+          <span style="font-size: 0.75rem; color: #888;">Result:</span>
+          <pre id="testnet-sdk-result" style="margin-top: 0.3rem; font-size: 0.75rem; color: #4caf50; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto;">No result yet</pre>
+        </div>
+      </div>
+
       <!-- Activity Log -->
       <div class="card">
         <h2>Activity Log</h2>
@@ -681,6 +778,103 @@
           <button id="mainnet-refreshChannelsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff;">Refresh Channels</button>
         </div>
         <div id="mainnet-channelsList" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+      </div>
+
+      <!-- SDK Functions -->
+      <div class="card">
+        <h2>SDK Functions</h2>
+        <p style="font-size: 0.8rem; color: #888; margin-bottom: 1rem;">Direct access to NitroliteClient SDK methods</p>
+
+        <!-- Getters Section -->
+        <div style="background: rgba(74, 144, 217, 0.1); border: 1px solid #4a90d9; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+          <h3 style="color: #4a90d9; font-size: 0.9rem; margin-bottom: 0.75rem;">📖 Read Functions (Getters)</h3>
+
+          <!-- getOpenChannels -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getOpenChannels()</span>
+              <button id="mainnet-sdk-getOpenChannels" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer;">Call</button>
+            </div>
+          </div>
+
+          <!-- getAccountBalance -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getAccountBalance(tokenAddress)</span>
+            <input type="text" id="mainnet-sdk-getAccountBalance-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-getAccountBalance" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- getChannelBalance -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getChannelBalance(channelId, tokenAddress)</span>
+            <input type="text" id="mainnet-sdk-getChannelBalance-channelId" placeholder="Channel ID (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <input type="text" id="mainnet-sdk-getChannelBalance-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-getChannelBalance" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- getChannelData -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getChannelData(channelId)</span>
+            <input type="text" id="mainnet-sdk-getChannelData-channelId" placeholder="Channel ID (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-getChannelData" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- getTokenAllowance -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(74,144,217,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getTokenAllowance(tokenAddress)</span>
+            <input type="text" id="mainnet-sdk-getTokenAllowance-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-getTokenAllowance" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- getTokenBalance -->
+          <div>
+            <span style="font-family: monospace; font-size: 0.8rem; color: #4a90d9;">getTokenBalance(tokenAddress)</span>
+            <input type="text" id="mainnet-sdk-getTokenBalance-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-getTokenBalance" disabled style="background: #4a90d9; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+        </div>
+
+        <!-- Setters Section -->
+        <div style="background: rgba(255, 152, 0, 0.1); border: 1px solid #ff9800; border-radius: 8px; padding: 1rem;">
+          <h3 style="color: #ff9800; font-size: 0.9rem; margin-bottom: 0.75rem;">✏️ Write Functions (Setters)</h3>
+
+          <!-- deposit -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,152,0,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #ff9800;">deposit(tokenAddress, amount)</span>
+            <input type="text" id="mainnet-sdk-deposit-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <input type="text" id="mainnet-sdk-deposit-amount" placeholder="Amount (in wei/units)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-deposit" disabled style="background: #ff9800; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- withdrawal -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,152,0,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #ff9800;">withdrawal(tokenAddress, amount)</span>
+            <input type="text" id="mainnet-sdk-withdrawal-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <input type="text" id="mainnet-sdk-withdrawal-amount" placeholder="Amount (in wei/units)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-withdrawal" disabled style="background: #ff9800; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- approveTokens -->
+          <div style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,152,0,0.2);">
+            <span style="font-family: monospace; font-size: 0.8rem; color: #ff9800;">approveTokens(tokenAddress, amount)</span>
+            <input type="text" id="mainnet-sdk-approveTokens-token" placeholder="Token address (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <input type="text" id="mainnet-sdk-approveTokens-amount" placeholder="Amount (in wei/units)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-approveTokens" disabled style="background: #ff9800; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+
+          <!-- closeChannel -->
+          <div>
+            <span style="font-family: monospace; font-size: 0.8rem; color: #ff9800;">closeChannel(channelId)</span>
+            <input type="text" id="mainnet-sdk-closeChannel-channelId" placeholder="Channel ID (0x...)" style="width: 100%; padding: 0.5rem; font-size: 0.8rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; margin-top: 0.4rem; box-sizing: border-box;">
+            <button id="mainnet-sdk-closeChannel" disabled style="background: #ff9800; color: white; padding: 0.4rem 1rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; margin-top: 0.4rem; width: 100%;">Call</button>
+          </div>
+        </div>
+
+        <!-- SDK Result Display -->
+        <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(0,0,0,0.3); border-radius: 8px;">
+          <span style="font-size: 0.75rem; color: #888;">Result:</span>
+          <pre id="mainnet-sdk-result" style="margin-top: 0.3rem; font-size: 0.75rem; color: #4caf50; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto;">No result yet</pre>
+        </div>
       </div>
 
       <!-- Activity Log -->
