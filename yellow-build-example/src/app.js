@@ -118,6 +118,9 @@ class YellowPaymentApp {
     this.privateKeyAccount = null;
     this.walletConnectProvider = null;
 
+    // Load persisted channels from localStorage
+    this.loadChannelsFromStorage();
+
     // Event listeners
     this.elements.connectBtn?.addEventListener('click', () => this.connectWallet());
 
@@ -151,6 +154,9 @@ class YellowPaymentApp {
     // On-chain channel creation event listener
     this.elements.createOnChainChannelBtn?.addEventListener('click', () => this.createOnChainChannel());
 
+    // Render any loaded channels
+    this.renderChannelsList();
+
     // Initialize WebSocket connection
     this.connectWebSocket();
   }
@@ -178,6 +184,133 @@ class YellowPaymentApp {
     }
 
     return confirm(message);
+  }
+
+  // LocalStorage key for channels
+  getChannelsStorageKey() {
+    return `yellow_${this.environment}_onChainChannels`;
+  }
+
+  // Save channels to localStorage
+  saveChannelsToStorage() {
+    try {
+      const channelsArray = [];
+      this.onChainChannels.forEach((data, channelId) => {
+        channelsArray.push({
+          channelId,
+          ...data,
+          // Convert non-serializable data
+          channel: data.channel ? {
+            participants: data.channel.participants,
+            adjudicator: data.channel.adjudicator,
+            challenge: data.channel.challenge?.toString(),
+            nonce: data.channel.nonce?.toString()
+          } : null
+        });
+      });
+      localStorage.setItem(this.getChannelsStorageKey(), JSON.stringify(channelsArray));
+      this.log(`Saved ${channelsArray.length} channel(s) to storage`);
+    } catch (error) {
+      console.error('Failed to save channels to storage:', error);
+    }
+  }
+
+  // Load channels from localStorage
+  loadChannelsFromStorage() {
+    try {
+      const stored = localStorage.getItem(this.getChannelsStorageKey());
+      if (stored) {
+        const channelsArray = JSON.parse(stored);
+        channelsArray.forEach(data => {
+          // Restore channel data with BigInt conversion
+          const channelData = {
+            ...data,
+            channel: data.channel ? {
+              participants: data.channel.participants,
+              adjudicator: data.channel.adjudicator,
+              challenge: BigInt(data.channel.challenge || 0),
+              nonce: BigInt(data.channel.nonce || 0)
+            } : null,
+            chainConfig: this.config.chains[data.chainId]
+          };
+          this.onChainChannels.set(data.channelId, channelData);
+        });
+        console.log(`[${this.environment}] Loaded ${channelsArray.length} channel(s) from storage`);
+      }
+    } catch (error) {
+      console.error('Failed to load channels from storage:', error);
+    }
+  }
+
+  // Manually recover an existing on-chain channel
+  async recoverChannel(channelId, chainId) {
+    const chainConfig = this.config.chains[chainId];
+    if (!chainConfig) {
+      this.log(`Chain ${chainId} not supported`, 'error');
+      return false;
+    }
+
+    // Check if already tracked
+    if (this.onChainChannels.has(channelId)) {
+      this.log('Channel already tracked');
+      return true;
+    }
+
+    try {
+      this.log(`Querying channel on ${chainConfig.name}...`);
+
+      // Create public client to query on-chain state
+      const publicClient = createPublicClient({
+        chain: chainConfig.chain,
+        transport: http()
+      });
+
+      // Get channel balance for USDC token first - this is simpler and tells us if channel exists
+      const getChannelBalancesAbi = [{
+        name: 'getChannelBalances',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [
+          { name: 'channelId', type: 'bytes32' },
+          { name: 'tokens', type: 'address[]' }
+        ],
+        outputs: [{ name: 'balances', type: 'uint256[]' }]
+      }];
+
+      const balances = await publicClient.readContract({
+        address: chainConfig.custody,
+        abi: getChannelBalancesAbi,
+        functionName: 'getChannelBalances',
+        args: [channelId, [chainConfig.token]]
+      });
+
+      const balance = balances && balances[0] ? Number(balances[0]) : 0;
+      this.log(`Channel balance: ${(balance / 1_000_000).toFixed(6)} USDC`);
+
+      if (balance === 0) {
+        this.log('Channel has no balance - may be closed or not exist', 'warn');
+      }
+
+      // Add to tracked channels
+      this.onChainChannels.set(channelId, {
+        channelId,
+        chainId,
+        chainConfig,
+        depositedAmount: balance,
+        recovered: true,
+        tokenAddress: chainConfig.token
+      });
+
+      this.saveChannelsToStorage();
+      this.renderChannelsList();
+      this.log(`Recovered channel ${channelId.slice(0, 10)}... on ${chainConfig.name}`);
+      return true;
+
+    } catch (error) {
+      console.error('Failed to recover channel:', error);
+      this.log(`Failed to recover channel: ${error.message}`, 'error');
+      return false;
+    }
   }
 
   connectWebSocket() {
@@ -1466,6 +1599,7 @@ class YellowPaymentApp {
         // Clear input
         if (this.elements.onChainChannelPartnerKey) this.elements.onChainChannelPartnerKey.value = '';
 
+        this.saveChannelsToStorage();
         this.renderChannelsList();
         await this.refreshOnChainBalances();
       } else {
@@ -2341,6 +2475,7 @@ class YellowPaymentApp {
           tokenAddress: chainConfig.token
         });
 
+        this.saveChannelsToStorage();
         this.renderChannelsList();
 
         if (this.pendingWithdrawal && this.pendingWithdrawal.step === 'submit_on_chain') {
@@ -2443,6 +2578,7 @@ class YellowPaymentApp {
           tokenAddress: chainConfig.token
         });
 
+        this.saveChannelsToStorage();
         this.log('Step 3/4: Moving funds from ledger to on-chain custody...');
         const { amount } = this.pendingWithdrawal;
         this.log(`Moving ${(amount / 1_000_000).toFixed(2)} USDC to custody contract`);
@@ -2710,6 +2846,7 @@ class YellowPaymentApp {
         }
 
         this.onChainChannels.delete(channelId);
+        this.saveChannelsToStorage();
         this.getChannels();
         this.getBalances();
       } else {
@@ -2804,22 +2941,44 @@ class YellowPaymentApp {
 
     let html = '';
 
+    // Recovery UI section
+    html += `
+      <div style="background: rgba(100,100,100,0.2); padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; border: 1px dashed rgba(255,255,255,0.2);">
+        <p style="color: #aaa; font-size: 0.8rem; margin-bottom: 0.5rem;">Recover existing channel:</p>
+        <input type="text" id="${this.prefix}recoverChannelId" placeholder="Channel ID (0x...)"
+          style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; font-size: 0.8rem; font-family: monospace;">
+        <select id="${this.prefix}recoverChainSelect" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem; border-radius: 4px; border: 1px solid #444; background: rgba(0,0,0,0.3); color: #fff; font-size: 0.8rem;">
+          ${Object.entries(this.config.chains).map(([chainId, config]) =>
+            `<option value="${chainId}">${config.name}</option>`
+          ).join('')}
+        </select>
+        <button onclick="window.${this.prefix.replace('-', '')}app.recoverChannelFromUI()"
+          style="background: #9c27b0; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8rem; width: 100%;">
+          Recover Channel
+        </button>
+      </div>
+    `;
+
     if (this.onChainChannels.size > 0) {
       html += '<p style="color: #ffd700; font-size: 0.85rem; margin-bottom: 0.5rem;">On-Chain Channels:</p>';
       this.onChainChannels.forEach((data, channelId) => {
-        const chainName = data.chainConfig?.name || `Chain ${data.chainId}`;
-        const channelIdShort = channelId.slice(0, 10) + '...';
+        const chainName = data.chainConfig?.name || this.config.chains[data.chainId]?.name || `Chain ${data.chainId}`;
+        const channelIdShort = channelId.slice(0, 10) + '...' + channelId.slice(-6);
+        const amount = data.depositedAmount ? (data.depositedAmount / 1_000_000).toFixed(6) : 'Unknown';
+        const partner = data.partnerAddress ? `${data.partnerAddress.slice(0, 6)}...${data.partnerAddress.slice(-4)}` : 'Unknown';
+        const recoveredBadge = data.recovered ? '<span style="background: #9c27b0; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; margin-left: 4px;">Recovered</span>' : '';
 
         html += `
           <div style="background: rgba(255,215,0,0.1); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid rgba(255,215,0,0.3);">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <div>
-                <strong>${chainName}</strong><br>
-                <span style="color: #888; font-size: 0.8rem;">${channelIdShort}</span><br>
-                <span style="color: #4caf50;">On-Chain</span>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+              <div style="flex: 1; min-width: 0;">
+                <strong>${chainName}</strong>${recoveredBadge}<br>
+                <span style="color: #888; font-size: 0.75rem; word-break: break-all;">${channelIdShort}</span><br>
+                <span style="color: #4caf50; font-size: 0.9rem;">${amount} USDC</span><br>
+                <span style="color: #888; font-size: 0.75rem;">Partner: ${partner}</span>
               </div>
               <button onclick="window.${this.prefix.replace('-', '')}app.closeChannel('${channelId}')"
-                style="background: #f44336; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">
+                style="background: #f44336; color: white; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; margin-left: 0.5rem;">
                 Close & Withdraw
               </button>
             </div>
@@ -2858,11 +3017,35 @@ class YellowPaymentApp {
       }).join('');
     }
 
-    if (html === '') {
-      html = '<p style="color: #888;">No channels found. Create one to withdraw funds on-chain.</p>';
+    if (this.onChainChannels.size === 0 && this.channels.length === 0) {
+      html += '<p style="color: #888; margin-top: 0.5rem;">No channels found. Create one to withdraw funds on-chain.</p>';
     }
 
     container.innerHTML = html;
+  }
+
+  // UI handler for recover channel
+  async recoverChannelFromUI() {
+    const channelIdInput = document.getElementById(`${this.prefix}recoverChannelId`);
+    const chainSelect = document.getElementById(`${this.prefix}recoverChainSelect`);
+
+    const channelId = channelIdInput?.value.trim();
+    const chainId = parseInt(chainSelect?.value || '0');
+
+    if (!channelId) {
+      this.log('Please enter a channel ID', 'error');
+      return;
+    }
+
+    if (!channelId.startsWith('0x') || channelId.length !== 66) {
+      this.log('Invalid channel ID format (should be 0x + 64 hex chars)', 'error');
+      return;
+    }
+
+    const success = await this.recoverChannel(channelId, chainId);
+    if (success && channelIdInput) {
+      channelIdInput.value = '';
+    }
   }
 }
 
