@@ -10,6 +10,7 @@ import type {
   StreamChunkMessage,
   CompleteMessage,
   ErrorMessage,
+  QueueStatusMessage,
   AnyMessage,
 } from "../types";
 
@@ -177,10 +178,31 @@ export async function serve(options: ServeOptions): Promise<void> {
       } else if (msg.type === "prompt_request") {
         const request = msg as PromptRequestMessage;
         requestQueue.push({ consumer, request });
+        const position = requestQueue.length;
         console.log(
-          `[${consumerAddress.slice(0, 10)}...] Queued request (queue size: ${requestQueue.length})`
+          `[${consumerAddress.slice(0, 10)}...] Queued request (queue size: ${position})`
         );
+
+        // Send queue position to consumer
+        const queueStatus: QueueStatusMessage = {
+          type: "queue_status",
+          position: isProcessing ? position : 0,
+          queueLength: position,
+        };
+        ws.send(queueStatus);
+
         processQueue();
+      } else if (msg.type === "queue_status_request") {
+        // Find consumer's position in queue
+        const position = requestQueue.findIndex(
+          (r) => r.consumer.address === consumerAddress
+        );
+        const queueStatus: QueueStatusMessage = {
+          type: "queue_status",
+          position: position === -1 ? 0 : position + 1,
+          queueLength: requestQueue.length,
+        };
+        ws.send(queueStatus);
       } else if (msg.type === "peer_left") {
         console.log(`[${consumerAddress.slice(0, 10)}...] Peer disconnected`);
       }

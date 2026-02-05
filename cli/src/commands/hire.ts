@@ -11,6 +11,8 @@ import type {
   CompleteMessage,
   ErrorMessage,
   ReadyMessage,
+  QueueStatusMessage,
+  QueueStatusRequestMessage,
 } from "../types";
 
 export interface HireOptions {
@@ -117,6 +119,15 @@ export async function hire(options: HireOptions): Promise<void> {
           responseResolver = null;
         }
       }
+    } else if (msg.type === "queue_status") {
+      const status = msg as QueueStatusMessage;
+      if (status.position === 0) {
+        console.log(`Processing your request...`);
+      } else {
+        console.log(
+          `You are #${status.position} in queue (${status.queueLength} total waiting)`
+        );
+      }
     } else if (msg.type === "peer_joined") {
       // Server joined the room
     } else if (msg.type === "peer_left") {
@@ -164,6 +175,12 @@ export async function hire(options: HireOptions): Promise<void> {
       await new Promise<void>((resolve) => {
         responseResolver = resolve;
       });
+    },
+    onQueueStatus: () => {
+      const request: QueueStatusRequestMessage = {
+        type: "queue_status_request",
+      };
+      ws.send(request);
     },
     onQuit: () => {
       ws.close();

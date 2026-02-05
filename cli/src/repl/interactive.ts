@@ -3,11 +3,12 @@ import * as readline from "readline";
 export interface ReplOptions {
   modelName: string;
   onPrompt: (prompt: string) => Promise<void>;
+  onQueueStatus?: () => void;
   onQuit: () => void;
 }
 
 export function startRepl(options: ReplOptions): void {
-  const { modelName, onPrompt, onQuit } = options;
+  const { modelName, onPrompt, onQueueStatus, onQuit } = options;
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -21,6 +22,16 @@ export function startRepl(options: ReplOptions): void {
       if (trimmed === "/quit" || trimmed === "/exit") {
         rl.close();
         onQuit();
+        return;
+      }
+
+      if (trimmed === "/queue") {
+        if (onQueueStatus) {
+          onQueueStatus();
+        } else {
+          console.log("Queue status not available.");
+        }
+        promptUser();
         return;
       }
 
@@ -42,7 +53,7 @@ export function startRepl(options: ReplOptions): void {
   };
 
   console.log(`\nConnected to model: ${modelName}`);
-  console.log("Type your prompt and press Enter. Use /quit or /exit to leave.\n");
+  console.log("Commands: /queue (check queue), /quit or /exit (leave)\n");
 
   promptUser();
 

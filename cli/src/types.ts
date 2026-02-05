@@ -31,6 +31,17 @@ export interface PromptRequestMessage {
   prompt: string;
 }
 
+export interface QueueStatusRequestMessage {
+  type: "queue_status_request";
+}
+
+// Server → Consumer queue messages
+export interface QueueStatusMessage {
+  type: "queue_status";
+  position: number; // 0 = currently processing, 1+ = waiting
+  queueLength: number;
+}
+
 // Relay system messages
 export interface ConnectedMessage {
   type: "connected";
@@ -52,9 +63,10 @@ export type ServerMessage =
   | ReadyMessage
   | StreamChunkMessage
   | CompleteMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | QueueStatusMessage;
 
-export type ConsumerMessage = PromptRequestMessage;
+export type ConsumerMessage = PromptRequestMessage | QueueStatusRequestMessage;
 
 export type RelaySystemMessage =
   | ConnectedMessage
