@@ -72,6 +72,18 @@
       color: #fff;
     }
 
+    .tab-btn.sessions {
+      background: rgba(255, 152, 0, 0.3);
+      color: #ff9800;
+      border: 2px solid #ff9800;
+      border-bottom: none;
+    }
+
+    .tab-btn.sessions.active {
+      background: #ff9800;
+      color: #fff;
+    }
+
     .tab-btn:hover {
       transform: translateY(-2px);
     }
@@ -121,6 +133,11 @@
     /* Mainnet card styling */
     .mainnet-content .card {
       border-left: 3px solid #4caf50;
+    }
+
+    /* Sessions card styling */
+    .sessions-content .card {
+      border-left: 3px solid #ff9800;
     }
 
     .card h2 {
@@ -241,6 +258,11 @@
     .env-badge.mainnet {
       background: rgba(76, 175, 80, 0.3);
       color: #4caf50;
+    }
+
+    .env-badge.sessions {
+      background: rgba(255, 152, 0, 0.3);
+      color: #ff9800;
     }
 
     /* App Sessions Section */
@@ -456,12 +478,301 @@
 
     <!-- Tab Navigation -->
     <div class="tab-nav">
+      <button class="tab-btn sessions active" onclick="switchTab('sessions')">
+        💸 Sessions
+      </button>
       <button class="tab-btn testnet" onclick="switchTab('testnet')">
         🧪 Testnet
       </button>
-      <button class="tab-btn mainnet active" onclick="switchTab('mainnet')">
+      <button class="tab-btn mainnet" onclick="switchTab('mainnet')">
         🚀 Mainnet
       </button>
+    </div>
+
+    <!-- ==================== SESSIONS CONTENT (Default) ==================== -->
+    <div id="sessions-content" class="tab-content sessions-content active">
+      <!-- Sessions Warning Banner -->
+      <div class="mainnet-warning" style="border-color: #ff9800; background: rgba(255, 152, 0, 0.15);">
+        <strong style="color: #ff9800;">💸 Bidirectional Payment Sessions (Mainnet)</strong>
+        <p style="color: #ffcc80;">Create payment sessions with partners. Both parties can pay and refund each other.</p>
+      </div>
+
+      <!-- Connection Status -->
+      <div class="card">
+        <h2>Connection Status</h2>
+        <div class="status">
+          <div class="status-dot" id="sessions-wsStatus"></div>
+          <span id="sessions-wsStatusText">Disconnected</span>
+        </div>
+        <div class="status">
+          <div class="status-dot" id="sessions-walletStatus"></div>
+          <span id="sessions-walletStatusText">Wallet not connected</span>
+        </div>
+        <p class="address" id="sessions-userAddress"></p>
+        <button id="sessions-connectBtn">Connect Wallet</button>
+      </div>
+
+      <!-- All Balances -->
+      <div class="card">
+        <h2>Your Balances</h2>
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+          <!-- Custody Balance (On-chain) -->
+          <div style="padding: 0.75rem; background: rgba(255,152,0,0.15); border-radius: 8px; border-left: 3px solid #ff9800;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div style="font-weight: 600; color: #ff9800;">Custody (On-chain)</div>
+                <div style="font-size: 0.75rem; color: #888;">Deposited in custody contract</div>
+              </div>
+              <div style="text-align: right;">
+                <div id="sessions-custodyBalanceDisplay" style="font-size: 1.25rem; font-weight: bold; color: #ff9800;">0.00 USDC</div>
+              </div>
+            </div>
+            <!-- Actions when custody > 0 -->
+            <div id="sessions-syncSection" style="display: none; margin-top: 0.5rem;">
+              <button id="sessions-withdrawCustodyBtn" disabled style="background: #f44336; color: white; padding: 0.5rem; font-size: 0.85rem; width: 100%;">
+                Withdraw to Wallet
+              </button>
+            </div>
+          </div>
+          <!-- Channel Balance -->
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: rgba(156,39,176,0.15); border-radius: 8px; border-left: 3px solid #9c27b0;">
+            <div>
+              <div style="font-weight: 600; color: #9c27b0;">Channel</div>
+              <div style="font-size: 0.75rem; color: #888;">Allocated in clearnode channel</div>
+            </div>
+            <div style="text-align: right;">
+              <div id="sessions-channelBalanceDisplay" style="font-size: 1.25rem; font-weight: bold; color: #9c27b0;">0.00 USDC</div>
+            </div>
+          </div>
+          <!-- Ledger Balance (Off-chain) -->
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: rgba(76,175,80,0.15); border-radius: 8px; border-left: 3px solid #4caf50;">
+            <div>
+              <div style="font-weight: 600; color: #4caf50;">Ledger (Off-chain)</div>
+              <div style="font-size: 0.75rem; color: #888;">Available for instant payments</div>
+            </div>
+            <div style="text-align: right;">
+              <div id="sessions-ledgerBalance" style="font-size: 1.25rem; font-weight: bold; color: #4caf50;">0.00 USDC</div>
+            </div>
+          </div>
+        </div>
+        <button id="sessions-refreshBalancesBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff; margin-top: 0.75rem;">
+          Refresh Balances
+        </button>
+      </div>
+
+      <!-- On-Chain Resize -->
+      <div class="card" id="sessions-resizeCard">
+        <h2>🔄 On-Chain Resize</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.75rem;">
+          On-chain resize: move funds between custody contract and channel.
+          Uses resize_amount (not allocate_amount) for direct on-chain operations.
+        </p>
+        <input type="text" id="sessions-resizeChannelId" placeholder="Channel ID (0x...) - leave empty to auto-detect" style="font-family: monospace; font-size: 0.85rem; margin-bottom: 0.5rem;">
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <input type="number" id="sessions-resizeAmount" placeholder="Amount (USDC)" step="0.001" style="flex: 1;">
+          <select id="sessions-resizeDirection" style="width: auto; min-width: 140px;">
+            <option value="allocate">Custody → Channel</option>
+            <option value="deallocate">Channel → Custody</option>
+          </select>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <button id="sessions-resizeBtn" disabled style="background: #9c27b0; color: white; flex: 1;">
+            Request Resize
+          </button>
+          <button id="sessions-closeChannelBtn" disabled style="background: #f44336; color: white; width: auto; min-width: 120px;">
+            Close Channel
+          </button>
+        </div>
+        <p id="sessions-resizeStatus" style="font-size: 0.75rem; color: #888; margin-top: 0.5rem; display: none;"></p>
+
+        <!-- Channel List -->
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.1);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <h3 style="color: #9c27b0; font-size: 0.9rem; margin: 0;">All Channels</h3>
+            <button id="sessions-refreshChannelsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff; padding: 0.4rem 0.8rem; font-size: 0.75rem; width: auto;">
+              Refresh
+            </button>
+          </div>
+          <div id="sessions-channelsList" style="font-size: 0.85rem;">
+            <p style="color: #888; text-align: center;">Connect wallet to view channels.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Off-Chain Allocate (Channel → Ledger) -->
+      <div class="card" id="sessions-allocateCard">
+        <h2>💰 Allocate (Channel → Ledger)</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.75rem;">
+          Move funds from channel to unified ledger balance (off-chain operation).
+          Uses allocate_amount for instant off-chain transfers.
+        </p>
+        <input type="text" id="sessions-allocateChannelId" placeholder="Channel ID (0x...) - leave empty to auto-detect" style="font-family: monospace; font-size: 0.85rem; margin-bottom: 0.5rem;">
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <input type="number" id="sessions-allocateAmount" placeholder="Amount (USDC)" step="0.001" style="flex: 1;">
+        </div>
+        <button id="sessions-allocateBtn" disabled style="background: #4caf50; color: white;">
+          Allocate to Ledger
+        </button>
+        <p id="sessions-allocateStatus" style="font-size: 0.75rem; color: #888; margin-top: 0.5rem; display: none;"></p>
+      </div>
+
+      <!-- Create Channel -->
+      <div class="card">
+        <h2>🆕 Create Channel</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.75rem;">
+          Create a new state channel with the clearnode. This creates the channel on-chain without depositing funds.
+        </p>
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <button id="sessions-createChannelBtn" disabled style="background: #4caf50; color: white; flex: 1;">
+            Create Channel
+          </button>
+        </div>
+        <p id="sessions-createChannelStatus" style="font-size: 0.75rem; color: #888; margin-top: 0.5rem; display: none;"></p>
+      </div>
+
+      <!-- On-Chain Close (Force Close) -->
+      <div class="card">
+        <h2>🔒 On-Chain Close (Force Close)</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.75rem;">
+          Force close a channel directly on-chain using the last valid state from the contract.
+          Use this when a channel is stuck in resize or other state on the clearnode.
+        </p>
+        <input type="text" id="sessions-forceCloseChannelId" placeholder="Channel ID (0x...)" style="font-family: monospace; font-size: 0.85rem; margin-bottom: 0.5rem;">
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <button id="sessions-fetchChannelDataBtn" disabled style="background: #4a90d9; color: white; flex: 1;">
+            Fetch Channel Data
+          </button>
+          <button id="sessions-forceCloseBtn" disabled style="background: #f44336; color: white; flex: 1;">
+            Force Close On-Chain
+          </button>
+        </div>
+        <div id="sessions-channelDataDisplay" style="display: none; background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 6px; margin-top: 0.5rem;">
+          <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Channel Status:</div>
+          <div id="sessions-channelStatusDisplay" style="font-family: monospace; font-size: 0.85rem; color: #4caf50; margin-bottom: 0.5rem;"></div>
+          <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Last Valid State (version):</div>
+          <div id="sessions-channelStateDisplay" style="font-family: monospace; font-size: 0.85rem; color: #ff9800; margin-bottom: 0.5rem;"></div>
+          <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.25rem;">Allocations:</div>
+          <div id="sessions-channelAllocationsDisplay" style="font-family: monospace; font-size: 0.8rem; color: #9c27b0;"></div>
+        </div>
+        <p id="sessions-forceCloseStatus" style="font-size: 0.75rem; color: #888; margin-top: 0.5rem; display: none;"></p>
+      </div>
+
+      <!-- Deposit Funds -->
+      <div class="card">
+        <h2>Deposit USDC</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem;">
+          Deposit USDC from your wallet to your ledger balance (Base network).
+        </p>
+        <input type="number" id="sessions-depositAmount" placeholder="Amount (USDC)" step="0.01" value="1">
+        <button id="sessions-depositBtn" disabled style="background: #ff9800; color: white;">
+          Deposit to Ledger
+        </button>
+      </div>
+
+      <!-- Withdraw Funds -->
+      <div class="card">
+        <h2>Withdraw to Wallet</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 0.5rem;">
+          Withdraw USDC from your ledger balance back to your wallet.
+        </p>
+        <input type="number" id="sessions-withdrawAmount" placeholder="Amount (USDC)" step="0.01" value="1">
+        <button id="sessions-withdrawBtn" disabled style="background: #4caf50; color: white;">
+          Withdraw to Wallet
+        </button>
+      </div>
+
+      <!-- Payment Sessions -->
+      <div class="card">
+        <h2>Payment Sessions</h2>
+        <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 1rem;">
+          Create bidirectional payment sessions. Both parties can send payments and refunds.
+          <br><span style="color: #ff9800;">Weights: [50, 50] | Quorum: 50</span> - Either party can sign state updates.
+        </p>
+
+        <!-- Create New Session -->
+        <div style="background: rgba(255,152,0,0.1); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+          <h3 style="color: #ff9800; font-size: 0.9rem; margin-bottom: 0.5rem;">Create New Session</h3>
+          <input type="text" id="sessions-partnerAddress" placeholder="Partner address (0x...)">
+          <input type="number" id="sessions-sessionAmount" placeholder="Initial amount to allocate (USDC)" step="0.01" value="10">
+          <p style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">
+            This amount will be deducted from your ledger balance and locked in the session.
+          </p>
+          <button id="sessions-createSessionBtn" disabled>Create Bidirectional Session</button>
+        </div>
+
+        <!-- Active Sessions List -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <h3 style="color: #ffd700; font-size: 0.9rem;">Active Sessions</h3>
+          <button id="sessions-refreshSessionsBtn" disabled style="background: rgba(255,255,255,0.2); color: #fff; padding: 0.4rem 0.8rem; font-size: 0.8rem; width: auto;">
+            Refresh
+          </button>
+        </div>
+        <div id="sessions-sessionsList" style="font-size: 0.85rem;">
+          <p style="color: #888; text-align: center; padding: 1rem;">Connect wallet to view sessions.</p>
+        </div>
+      </div>
+
+      <!-- Payment Modal -->
+      <div id="sessions-paymentModal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>💸 Send Payment / Refund</h2>
+            <button class="modal-close" id="sessions-paymentCloseBtn">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="modal-field">
+              <div class="modal-field-label">Session ID</div>
+              <div class="modal-field-value" id="sessions-paymentSessionId"></div>
+            </div>
+            <div class="modal-field">
+              <div class="modal-field-label">Partner</div>
+              <div class="modal-field-value" id="sessions-paymentPartner"></div>
+            </div>
+            <div class="modal-field">
+              <div class="modal-field-label">Current Balances</div>
+              <div style="display: flex; gap: 1rem; margin-top: 0.5rem;">
+                <div style="flex: 1; text-align: center; padding: 0.75rem; background: rgba(76,175,80,0.2); border-radius: 6px;">
+                  <div id="sessions-paymentMyBalance" style="color: #4caf50; font-weight: bold; font-size: 1.1rem;">0.00 USDC</div>
+                  <div style="color: #888; font-size: 0.8rem;">You</div>
+                </div>
+                <div style="flex: 1; text-align: center; padding: 0.75rem; background: rgba(255,152,0,0.2); border-radius: 6px;">
+                  <div id="sessions-paymentPartnerBalance" style="color: #ff9800; font-weight: bold; font-size: 1.1rem;">0.00 USDC</div>
+                  <div style="color: #888; font-size: 0.8rem;">Partner</div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-field">
+              <div class="modal-field-label">State Version</div>
+              <div class="modal-field-value" id="sessions-paymentVersion">1</div>
+            </div>
+            <div class="modal-field">
+              <div class="modal-field-label">Direction</div>
+              <select id="sessions-paymentDirection" style="width: 100%; padding: 0.75rem; border-radius: 4px; background: #2a2a2a; color: #fff; border: 1px solid #444; margin-top: 0.25rem;">
+                <option value="user-to-partner">You → Partner (Pay)</option>
+                <option value="partner-to-user">Partner → You (Refund)</option>
+              </select>
+            </div>
+            <div class="modal-field">
+              <div class="modal-field-label">Amount (USDC)</div>
+              <input type="number" id="sessions-paymentAmount" placeholder="0.00" step="0.01" min="0"
+                     style="width: 100%; padding: 0.75rem; border-radius: 4px; background: #2a2a2a; color: #fff; border: 1px solid #444; margin-top: 0.25rem; box-sizing: border-box;">
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button id="sessions-closeSessionBtn" style="background: #f44336;">Close Session</button>
+            <button id="sessions-paymentCancelBtn" style="background: #666;">Cancel</button>
+            <button id="sessions-paymentSendBtn" style="background: #4caf50;">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="card">
+        <h2>Activity Log</h2>
+        <div class="log" id="sessions-activityLog">
+          <div class="log-entry">💸 Sessions mode - Waiting for connection...</div>
+        </div>
+      </div>
     </div>
 
     <!-- ==================== TESTNET CONTENT ==================== -->
@@ -779,7 +1090,7 @@
     </div>
 
     <!-- ==================== MAINNET CONTENT ==================== -->
-    <div id="mainnet-content" class="tab-content mainnet-content active">
+    <div id="mainnet-content" class="tab-content mainnet-content">
       <!-- Warning Banner -->
       <div class="mainnet-warning">
         <strong>⚠️ MAINNET - REAL FUNDS ⚠️</strong>
@@ -1083,6 +1394,11 @@
       // Update tab content
       document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
       document.getElementById(`${tab}-content`).classList.add('active');
+
+      // Initialize sessions app when switching to sessions tab
+      if (tab === 'sessions' && window.initSessionsApp) {
+        window.initSessionsApp();
+      }
     }
 
     // Collapsible sections
@@ -1098,8 +1414,19 @@
         header.classList.add('collapsed');
       }
     }
+
+    // Auto-init sessions app since it's the default tab
+    document.addEventListener('DOMContentLoaded', () => {
+      // Small delay to ensure module is loaded
+      setTimeout(() => {
+        if (window.initSessionsApp) {
+          window.initSessionsApp();
+        }
+      }, 100);
+    });
   </script>
 
   <script type="module" src="/src/app.js"></script>
+  <script type="module" src="/src/sessions-app.js"></script>
 </body>
 </html>

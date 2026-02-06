@@ -195,6 +195,12 @@ export class SessionsApp {
       closeChannelBtn: this.getElement("closeChannelBtn"),
       channelsList: this.getElement("channelsList"),
       refreshChannelsBtn: this.getElement("refreshChannelsBtn"),
+      // Allocate elements
+      allocateCard: this.getElement("allocateCard"),
+      allocateChannelId: this.getElement("allocateChannelId"),
+      allocateAmount: this.getElement("allocateAmount"),
+      allocateBtn: this.getElement("allocateBtn"),
+      allocateStatus: this.getElement("allocateStatus"),
       // Create channel elements
       createChannelBtn: this.getElement("createChannelBtn"),
       createChannelStatus: this.getElement("createChannelStatus"),
@@ -240,6 +246,9 @@ export class SessionsApp {
     );
     this.elements.refreshChannelsBtn?.addEventListener("click", () =>
       this.getChannels()
+    );
+    this.elements.allocateBtn?.addEventListener("click", () =>
+      this.requestAllocate()
     );
     this.elements.createChannelBtn?.addEventListener("click", () =>
       this.createChannelOnly()
@@ -444,6 +453,13 @@ export class SessionsApp {
             this.elements.resizeStatus.textContent = `Server rejected: ${errorMsg}`;
             this.elements.resizeStatus.style.color = "#f44336";
             this.pendingOnChainResize = null;
+          }
+
+          // Update allocate status if there was a pending allocate
+          if (this.pendingAllocate && this.elements.allocateStatus) {
+            this.elements.allocateStatus.textContent = `Server rejected: ${errorMsg}`;
+            this.elements.allocateStatus.style.color = "#f44336";
+            this.pendingAllocate = null;
           }
 
           // Handle resize retry for "insufficient unified balance" error
@@ -757,6 +773,10 @@ export class SessionsApp {
     if (this.elements.closeChannelBtn) {
       // Enable close button when wallet is connected
       this.elements.closeChannelBtn.disabled = !this.userAddress;
+    }
+    if (this.elements.allocateBtn) {
+      // Enable allocate button when wallet is connected
+      this.elements.allocateBtn.disabled = !this.userAddress;
     }
     if (!hasChannel && this.elements.resizeStatus) {
       this.elements.resizeStatus.style.display = "block";
@@ -1855,6 +1875,65 @@ export class SessionsApp {
     }
   }
 
+  async requestAllocate() {
+    const amount = parseFloat(this.elements.allocateAmount?.value || "0");
+    const manualChannelId = this.elements.allocateChannelId?.value?.trim() || "";
+
+    if (isNaN(amount) || amount <= 0) {
+      this.log("Please enter a valid allocate amount", "error");
+      return;
+    }
+
+    // Use manual channel ID if provided, otherwise fall back to auto-detected channel
+    const channelId = manualChannelId || this.activeChannel?.channel_id;
+
+    if (!channelId) {
+      this.log("No channel ID provided and no active channel detected", "error");
+      return;
+    }
+
+    const amountInMicrounits = Math.floor(amount * 1_000_000);
+
+    // Show status
+    if (this.elements.allocateStatus) {
+      this.elements.allocateStatus.style.display = "block";
+      this.elements.allocateStatus.textContent = "Requesting allocation...";
+      this.elements.allocateStatus.style.color = "#888";
+    }
+
+    try {
+      this.log(
+        `Allocating ${amount} USDC from channel to ledger (channel: ${channelId.slice(0, 10)}...)`
+      );
+
+      // Store pending allocate info
+      this.pendingAllocate = {
+        channelId: channelId,
+        amount: amountInMicrounits,
+        displayAmount: amount,
+      };
+
+      // Use allocate_amount for off-chain channel → ledger transfer
+      const allocateMessage = await createResizeChannelMessage(
+        this.messageSigner,
+        {
+          channel_id: channelId,
+          allocate_amount: amountInMicrounits, // Positive moves from channel to ledger
+          funds_destination: this.userAddress,
+        }
+      );
+
+      this.ws.send(allocateMessage);
+    } catch (error) {
+      this.log(`Allocate request failed: ${error.message}`, "error");
+      if (this.elements.allocateStatus) {
+        this.elements.allocateStatus.textContent = `Error: ${error.message}`;
+        this.elements.allocateStatus.style.color = "#f44336";
+      }
+      this.pendingAllocate = null;
+    }
+  }
+
   async closeChannelManual() {
     const manualChannelId = this.elements.resizeChannelId?.value?.trim() || "";
     const channelId = manualChannelId || this.activeChannel?.channel_id;
@@ -2486,6 +2565,24 @@ export class SessionsApp {
       // Handle on-chain resize flow (from resize box)
       if (this.pendingOnChainResize) {
         await this.executeOnChainResize(data);
+        return;
+      }
+
+      // Handle off-chain allocate flow (from allocate box)
+      if (this.pendingAllocate) {
+        const pending = this.pendingAllocate;
+        this.pendingAllocate = null;
+
+        this.log(`Allocated ${pending.displayAmount} USDC to ledger!`, "success");
+
+        if (this.elements.allocateStatus) {
+          this.elements.allocateStatus.textContent = `Success! ${pending.displayAmount} USDC moved to ledger`;
+          this.elements.allocateStatus.style.color = "#4caf50";
+        }
+
+        // Refresh balances
+        this.getBalances();
+        this.getChannels();
         return;
       }
 
