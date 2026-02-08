@@ -685,9 +685,12 @@ export class SessionsApp {
         statusIcon = "⚠️";
       }
 
-      // Get balance info
+      // Get balance info - clearnode returns 'amount' field directly
       let balanceDisplay = "N/A";
-      if (ch.allocations && Array.isArray(ch.allocations)) {
+      if (ch.amount !== undefined) {
+        // Direct amount field from clearnode response
+        balanceDisplay = `${(parseInt(ch.amount) / 1_000_000).toFixed(2)} USDC`;
+      } else if (ch.allocations && Array.isArray(ch.allocations)) {
         const userAlloc = ch.allocations.find(
           (a) => a.participant?.toLowerCase() === this.userAddress?.toLowerCase()
         );
@@ -725,11 +728,14 @@ export class SessionsApp {
     }
 
     // Try to get user's allocation from channel data
-    // Channel structure may have: allocations, balances, or participant-specific amounts
+    // Channel structure may have: amount, allocations, balances, or participant-specific amounts
     let userBalance = 0;
 
     // Check various possible channel data structures
-    if (channel.allocations && Array.isArray(channel.allocations)) {
+    // Clearnode returns 'amount' field directly
+    if (channel.amount !== undefined) {
+      userBalance = parseInt(channel.amount || "0");
+    } else if (channel.allocations && Array.isArray(channel.allocations)) {
       const userAlloc = channel.allocations.find(
         (a) => a.participant?.toLowerCase() === this.userAddress?.toLowerCase()
       );
@@ -1914,11 +1920,13 @@ export class SessionsApp {
       };
 
       // Use allocate_amount for off-chain channel → ledger transfer
+      // NEGATIVE allocate_amount moves from Channel → Ledger
+      // POSITIVE allocate_amount moves from Ledger → Channel
       const allocateMessage = await createResizeChannelMessage(
         this.messageSigner,
         {
           channel_id: channelId,
-          allocate_amount: amountInMicrounits, // Positive moves from channel to ledger
+          allocate_amount: -amountInMicrounits, // Negative moves from channel to ledger
           funds_destination: this.userAddress,
         }
       );
