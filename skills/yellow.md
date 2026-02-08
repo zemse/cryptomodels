@@ -495,6 +495,52 @@ Faucet tokens go to unified OFF-CHAIN balance, not wallet. To withdraw:
 3. Resize to allocate funds to channel
 4. Close channel to withdraw
 
+### Standalone Deposits NOT Detected by Clearnode
+
+**CRITICAL:** The clearnode does NOT monitor standalone `Deposited` events. It only monitors channel-related events:
+- `Created` - channel creation
+- `Resized` - channel resize
+- `Closed` - channel close
+- `Challenged` - disputes
+
+If you call `deposit()` directly on the Custody contract, the funds will be stuck in custody but the clearnode's ledger won't know about them.
+
+**Solution: Use `depositAndCreate` Pattern**
+
+```typescript
+// 1. Get channel config from clearnode via WebSocket
+const channelMessage = await createCreateChannelMessage(signer, {
+  chain_id: 8453,
+  token: USDC_ADDRESS
+});
+ws.send(channelMessage);
+
+// 2. In response handler, sign state and call depositAndCreate on-chain
+const { channel, state, serverSignature } = channelData;
+const channelId = getChannelId(channel, chainId);
+const packedState = getPackedState(channelId, unsignedState);
+const userSignature = await wallet.signMessage({ message: { raw: packedState } });
+
+// 3. Execute depositAndCreate with both signatures
+await custody.depositAndCreate(
+  tokenAddress,
+  depositAmount,
+  channel,
+  { ...state, sigs: [userSignature, serverSignature] }
+);
+```
+
+This emits a `Created` event which clearnode monitors.
+
+**IMPORTANT LIMITATION (as of Feb 2026):** Even with `depositAndCreate`, the deposited funds go to the user's on-chain custody account, while the channel is created with 0 allocation. The clearnode sees the Created event but only knows about the 0-allocation channel, not the custody deposit.
+
+Calling `resize_channel` after `depositAndCreate` fails with "insufficient unified balance" because clearnode's internal ledger doesn't track on-chain custody balances.
+
+**Current workaround:**
+- Withdraw stuck custody funds directly using `Custody.withdraw(token, amount)`
+- Use testnet faucet which credits directly to clearnode's internal ledger
+- This is a protocol limitation that needs clearnode changes to fix
+
 ---
 
 ## SDK Source Reference
